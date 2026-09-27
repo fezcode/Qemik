@@ -28,6 +28,7 @@ public sealed partial class MainWindow : Window
     private string search = "";
     private InstallationInfo? installation;
     private bool busy;
+    private bool closed;
     public MainWindow(LibraryStore store, VmManager manager)
     {
         this.store = store; this.manager = manager; prefs = store.LoadPreferences();
@@ -58,12 +59,13 @@ public sealed partial class MainWindow : Window
         manager.Changed += OnManagerChanged;
         Opened += async (_, _) => { try { await DetectAsync(); } catch (Exception ex) { Error(ex); } };
         Closing += (_, e) => { if (manager.HasRunning || busy) { e.Cancel = true; Notify("Stop your running machines and finish the current operation before closing Qemik."); } };
-        Closed += (_, _) => { manager.Changed -= OnManagerChanged; foreach (var guest in guestWindows.Values.ToArray()) guest.Close(); };
+        Closed += (_, _) => { closed = true; manager.Changed -= OnManagerChanged; foreach (var guest in guestWindows.Values.ToArray()) guest.Close(); };
         ShowLibrary();
     }
-    private void OnManagerChanged() => Dispatcher.UIThread.Post(() => { if (location == "library") ShowLibrary(); else if (location.StartsWith("vm:")) ShowVm(location[3..]); });
+    private void OnManagerChanged() => Dispatcher.UIThread.Post(() => { if (closed) return; if (location == "library") ShowLibrary(); else if (location.StartsWith("vm:")) ShowVm(location[3..]); });
     private void Notify(string text) { notice.Text = text; notice.Foreground = Brush.Parse("#D7F59A"); }
     private void Error(Exception ex) { notice.Text = ex.Message; notice.Foreground = Brush.Parse("#F7B4A9"); }
+    internal void ShowSharingError(Exception ex) => Error(ex);
     private void EnsureIdle() { if (busy) throw new InvalidOperationException("Finish or pause the active operation first."); }
     private async Task Run(Func<Task> action) { try { await action(); } catch (Exception ex) { Error(ex); } }
     private void Navigation()
@@ -117,9 +119,11 @@ public sealed partial class MainWindow : Window
                 var icon = new Border { Width = 58, Height = 58, CornerRadius = new CornerRadius(14), Background = Brush.Parse(vm.Guest == "Windows" ? "#283D4F" : "#39422C"), Child = Text(vm.Guest == "Windows" ? "⊞" : "◇", 36, "#C5DCC8"), Padding = new Thickness(13, 3) };
                 var summary = Stack(Heading(vm.Name, 19), Muted($"{vm.Guest}  ·  {vm.Architecture}  ·  {vm.Cores * vm.Threads} CPUs  ·  {vm.MemoryMiB / 1024.0:0.#} GB")); summary.Spacing = 6;
                 var details = Columns(icon, summary, "Auto,*"); summary.VerticalAlignment = VerticalAlignment.Center;
-                var actions = Row(Text("● " + manager.State(vm.Id), 12, manager.IsRunning(vm.Id) ? "#D7F59A" : "#92988D"), Button("Open", () => { if (manager.IsRunning(vm.Id) && vm.Display == "qemik") OpenGuest(vm); else ShowVm(vm.Id); }), AsyncButton(manager.IsRunning(vm.Id) ? "Shut down" : "▶  Start", () => manager.IsRunning(vm.Id) ? manager.ControlAsync(vm.Id, "system_powerdown") : StartVm(vm), Error, "primary"));
+                var primary = vm.IsBlueprint ? AsyncButton("Create VM", () => CreateFromBlueprint(vm), Error, "primary") : AsyncButton(manager.IsRunning(vm.Id) ? "Shut down" : "▶  Start", () => manager.IsRunning(vm.Id) ? manager.ControlAsync(vm.Id, "system_powerdown") : StartVm(vm), Error, "primary");
+                var actions = Row(Text("● " + (vm.IsBlueprint ? "Blueprint" : manager.State(vm.Id)), 12, vm.IsBlueprint || manager.IsRunning(vm.Id) ? "#D7F59A" : "#92988D"), Button("Open", () => { if (manager.IsRunning(vm.Id) && manager.Session(vm.Id)?.DisplayBackend is "qemik" or "sdl" or "gtk") OpenGuest(vm); else ShowVm(vm.Id); }), primary);
                 actions.VerticalAlignment = VerticalAlignment.Center;
                 actions.Children.Insert(2, WithIcon(Button("Options", () => ShowVm(vm.Id)), "Options", Icons.Settings));
+                if (manager.IsRunning(vm.Id)) actions.Children.Add(ForceShutdownButton(vm.Id));
                 cards.Children.Add(Card(Columns(details, actions, "*,Auto")));
             }
         }
@@ -154,9 +158,13 @@ public sealed partial class MainWindow : Window
         var result = await dialog.ShowDialog<VmConfig?>(this);
         if (result is not null) { if (await new SettingsWindow(result, prefs, manager).ShowDialog<bool>(this)) { store.Save(result); ShowVm(result.Id); Notify("Machine created. Attach a bootable image before starting."); } }
     }
-    private async Task EditVm(VmConfig vm)
+    private async Task EditVm(VmConfig vm, Window? owner = null)
     {
-        if (manager.IsRunning(vm.Id)) throw new InvalidOperationException("Stop the virtual machine before changing its hardware.");
+        if (manager.IsRunning(vm.Id))
+        {
+            var current = await manager.RunningConfigurationAsync(vm.Id);
+            await new SettingsWindow(current, prefs, manager, readOnly: true, launchCommand: manager.Session(vm.Id)?.LaunchCommand).ShowDialog<bool>(owner ?? this); return;
+        }
         var copy = vm.Clone();
         if (await new SettingsWindow(copy, prefs, manager).ShowDialog<bool>(this)) { store.Save(copy); ShowVm(copy.Id); Notify("Settings saved."); }
     }
@@ -165,20 +173,21 @@ public sealed partial class MainWindow : Window
         var vm = store.List().FirstOrDefault(v => v.Id == id); if (vm is null) { ShowLibrary(); return; }
         var running = manager.IsRunning(id);
         var controls = Row();
-        if (!running) controls.Children.Add(AsyncButton("▶  Start machine", () => StartVm(vm), Error, "primary"));
+        if (vm.IsBlueprint) controls.Children.Add(AsyncButton("Create VM from blueprint", () => CreateFromBlueprint(vm), Error, "primary"));
+        else if (!running) controls.Children.Add(AsyncButton("▶  Start machine", () => StartVm(vm), Error, "primary"));
         else
         {
-            if (vm.Display == "qemik") controls.Children.Add(Button("Open guest window", () => OpenGuest(vm), "primary"));
+            if (manager.Session(vm.Id)?.DisplayBackend is "qemik" or "sdl" or "gtk") controls.Children.Add(Button("Open guest window", () => OpenGuest(vm), "primary"));
             var paused = manager.State(id) == "Paused";
             controls.Children.Add(AsyncButton(paused ? "▶  Resume" : "Ⅱ  Pause", () => manager.ControlAsync(id, paused ? "cont" : "stop"), Error));
             controls.Children.Add(AsyncButton("Shut down", () => manager.ControlAsync(id, "system_powerdown"), Error));
             controls.Children.Add(AsyncButton("Reset", async () => { if (await Confirm("Reset machine?", "This immediately restarts the guest. Unsaved work can be lost.", "Reset")) await manager.ControlAsync(id, "system_reset"); }, Error));
-            controls.Children.Add(AsyncButton("Force stop", async () => { if (await Confirm("Force stop?", "This is like unplugging a computer. Unsaved data can be lost.", "Force stop")) await manager.ForceStopAsync(id); }, Error, "danger"));
+            controls.Children.Insert(controls.Children.Count - 1, ForceShutdownButton(id));
         }
-        var settings = AsyncButton("⚙  Edit settings", () => EditVm(vm), Error); settings.IsEnabled = !running;
+        var settings = WithIcon(AsyncButton(running ? "View settings" : "Edit settings", () => EditVm(vm), Error), running ? "View settings" : "Edit settings", Icons.Settings);
         var overview = Stack(Card(Stack(Row(Text("● " + manager.State(id), 14, "#D7F59A"), Muted(vm.Architecture + " / " + vm.Accelerator.ToUpperInvariant())), Heading(vm.Name, 32), Muted(vm.Description.Length > 0 ? vm.Description : "Your own machine. Ready when you are."), controls)),
             Columns(Card(Stack(Eyebrow("SYSTEM"), Heading($"{vm.Cores * vm.Threads} virtual CPUs", 20), Muted($"{vm.MemoryMiB / 1024.0:0.#} GB memory · {vm.Cpu}\n{vm.Machine} · {(vm.Uefi ? "UEFI" : "Default firmware")}"))), Card(Stack(Eyebrow("DEVICES"), Heading($"{vm.Drives.Count} attached drives", 20), Muted($"{vm.Video} · {vm.Display.ToUpperInvariant()} display\n{vm.Network} networking · {vm.Audio} sound")))),
-            Card(Stack(Heading("Guest display", 18), Muted(vm.Display == "qemik" ? "A dedicated Qemik window shows this guest with keyboard, mouse, fullscreen and power controls. Closing the display keeps the machine running. Use Ctrl+Alt+G to release input." : vm.Display == "vnc" ? $"Connect your VNC viewer to 127.0.0.1:{5900 + vm.VncDisplay}. The endpoint is local to this computer." : vm.Display == "none" ? "This machine has no graphical display. Configure serial output for console access." : "Starting this machine opens QEMU's native display window. Select qemik in Display settings for an integrated guest window."))),
+            Card(Stack(Heading("Guest display", 18), Muted(vm.Display == "qemik" ? "A dedicated Qemik window shows this guest with keyboard, mouse, fullscreen and power controls. Closing the display keeps the machine running. Use Ctrl+Alt+G to release input." : vm.Display == "vnc" ? $"Connect your VNC viewer to 127.0.0.1:{5900 + vm.VncDisplay}. The endpoint is local to this computer." : vm.Display == "none" ? "This machine has no graphical display. Configure serial output for console access." : "SDL on Windows opens a custom Qemik guest window with a native GPU surface and toolbar. Closing it keeps the guest running; Open reattaches it. GTK uses an external QEMU window."))),
             Card(Stack(Heading("Storage", 18), vm.Drives.Count == 0 ? Muted("No drives attached. Add a disk and an installation ISO in settings.") : Stack(vm.Drives.Select(d => (Control)Stack(Muted($"{(d.CdRom ? "CD/DVD" : d.Interface.ToUpperInvariant())}  ·  {d.Path}"), ExplorerButton(d.Path, "Show in Explorer"))).ToArray()))));
         var tabs = new TabControl();
         var log = Code("Select Refresh to read the latest QEMU output.");
@@ -190,7 +199,14 @@ public sealed partial class MainWindow : Window
             new TabItem { Header = "Snapshots", Content = Scroll(Snapshots(vm)) },
             new TabItem { Header = "Logs", Content = Scroll(logs) }
         };
-        var footer = Row(Button("Download installer", () => { if (!busy) ShowImages(vm.Id); }), AsyncButton("Export configuration", () => ExportVm(vm), Error), AsyncButton("Remove from library", () => RemoveVm(vm), Error, "danger"));
+        var footer = new WrapPanel();
+        footer.Children.Add(Button("Download installer", () => { if (!busy) ShowImages(vm.Id); }));
+        footer.Children.Add(AsyncButton("Export configuration", () => ExportVm(vm), Error));
+        footer.Children.Add(AsyncButton("Remove from library", () => RemoveVm(vm), Error, "danger"));
+        footer.Children.Insert(1, WithIcon(AsyncButton("Shared folders", () => new HostFoldersWindow(vm).ShowDialog(this), Error), "Shared folders", Icons.Folder));
+        var blueprintButton = AsyncButton(vm.IsBlueprint ? "Use as regular VM" : "Set as blueprint", () => ChangeBlueprint(vm), Error);
+        blueprintButton.IsEnabled = !running; ToolTip.SetTip(blueprintButton, "Fully shut down the machine before changing its blueprint status."); footer.Children.Insert(0, blueprintButton);
+        foreach (var action in footer.Children) action.Margin = new Thickness(0, 0, 8, 6);
         var layout = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 24 };
         layout.Children.Add(PageHeader("VIRTUAL MACHINE", vm.Name, vm.Guest + " guest", settings)); Grid.SetRow(tabs, 1); layout.Children.Add(tabs); Grid.SetRow(footer, 2); layout.Children.Add(footer);
         SetPage("vm:" + id, layout);

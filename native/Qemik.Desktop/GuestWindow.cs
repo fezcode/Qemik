@@ -15,57 +15,100 @@ public sealed partial class GuestWindow : Window
     private VmConfig vm;
     private readonly VmManager manager;
     private readonly GuestSurface surface = new();
+    private readonly NativeGpuSurface? nativeSurface;
+    public bool UsesNativeGpu => nativeSurface is not null;
     private readonly CancellationTokenSource closing = new();
     private readonly TextBlock status = Muted("Connecting to guest display…");
     private readonly Button pause;
     private readonly DispatcherTimer resizeTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private readonly CheckBox autoResize;
-    private readonly TextBlock integration = Muted("Resize the guest manually in Ubuntu Settings → Displays, or enable Fit resolution.");
-    private (int Width, int Height) lastRequested;
+    private readonly TextBlock integration = Muted("Waiting for automatic resolution fitting…");
+    private readonly GuestAutoResize autoFit = new();
+    private bool sendingResize;
+    private (int Width, int Height) resolutionLimit = (3840, 2160);
     private bool resizeAvailable;
     private readonly DispatcherTimer clipboardTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     private bool syncingClipboard;
     private string? lastClipboard;
     private readonly CheckBox shareClipboard;
+    private readonly Button clipboardSetup;
+    private readonly Func<Task>? enableClipboardForNextStart;
+    private bool ClipboardChannelAvailable => manager.Session(vm.Id)?.ClipboardChannel ?? vm.SharedClipboard;
     private GuestDisplayClient? display;
+    private GuestAgentClipboard? agentClipboard;
+    private int agentGeneration;
+    private bool ClipboardWindowActive => IsActive || nativeSurface?.IsForeground == true;
     private bool connecting;
-    public GuestWindow(VmConfig machine, VmManager vmManager)
+    public GuestWindow(VmConfig machine, VmManager vmManager, Func<Task>? enableClipboardForNextStart = null, Func<Window, Task>? viewSettings = null)
     {
-        vm = machine; manager = vmManager;
+        vm = machine; manager = vmManager; this.enableClipboardForNextStart = enableClipboardForNextStart;
+        if (OperatingSystem.IsWindows() && (manager.Session(vm.Id)?.DisplayBackend ?? vm.Display) == "sdl") nativeSurface = new NativeGpuSurface();
         Title = vm.Name + " — Qemik"; Width = 1152; Height = 840; MinWidth = 820; MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "qemik.ico"); if (File.Exists(iconPath)) Icon = new WindowIcon(iconPath);
         pause = AsyncButton("Pause", async () => await manager.ControlAsync(vm.Id, manager.State(vm.Id) == "Paused" ? "cont" : "stop"), Error);
         var toolbar = Row(pause, AsyncButton("Shut down", () => manager.ControlAsync(vm.Id, "system_powerdown"), Error),
+            AsyncButton("Force shutdown", async () => { await manager.ForceStopAsync(vm.Id); Close(); }, Error, "danger"),
             AsyncButton("Reset…", async () => { if (await Confirm("Reset this guest?", "Unsaved guest work can be lost.", "Reset")) await manager.ControlAsync(vm.Id, "system_reset"); }, Error),
             Button("Fullscreen", () => WindowState = WindowState == WindowState.FullScreen ? WindowState.Normal : WindowState.FullScreen),
-            AsyncButton("Ctrl+Alt+Del", async () => { if (display is not { } d) return; await d.KeyAsync(0xffe3, true); await d.KeyAsync(0xffe9, true); await d.KeyAsync(0xffff, true); await d.KeyAsync(0xffff, false); await d.KeyAsync(0xffe9, false); await d.KeyAsync(0xffe3, false); }, Error),
-            AsyncButton("Reconnect", ConnectAsync, Error),
-            AsyncButton("Force stop…", async () => { if (await Confirm("Force stop this guest?", "This cuts power immediately. Unsaved guest work can be lost.", "Force stop")) await manager.ForceStopAsync(vm.Id); }, Error, "danger"));
+            AsyncButton("Ctrl+Alt+Del", async () =>
+            {
+                if (UsesNativeGpu && manager.Session(vm.Id)?.Qmp is { } qmp)
+                {
+                    await qmp.ExecuteAsync("send-key", new { keys = new[] { new { type = "qcode", data = "ctrl" }, new { type = "qcode", data = "alt" }, new { type = "qcode", data = "delete" } } }); return;
+                }
+                if (display is not { } d) return; await d.KeyAsync(0xffe3, true); await d.KeyAsync(0xffe9, true); await d.KeyAsync(0xffff, true); await d.KeyAsync(0xffff, false); await d.KeyAsync(0xffe9, false); await d.KeyAsync(0xffe3, false);
+            }, Error),
+            AsyncButton("Reconnect", ConnectAsync, Error));
         var actions = new WrapPanel { Orientation = Orientation.Horizontal };
-        var icons = new[] { Icons.Pause, Icons.Power, Icons.Reset, Icons.Fullscreen, Icons.Keyboard, Icons.Reconnect, Icons.Stop };
+        var icons = new[] { Icons.Pause, Icons.Power, Icons.Stop, Icons.Reset, Icons.Fullscreen, Icons.Keyboard, Icons.Reconnect };
         var buttons = toolbar.Children.OfType<Button>().ToArray(); toolbar.Children.Clear();
+        ToolTip.SetTip(buttons[2], "Immediately stops QEMU and closes this window. Unsaved guest work is lost.");
         for (var i = 0; i < buttons.Length; i++)
         {
             var button = buttons[i]; WithIcon(button, (string)button.Content!, icons[i]); button.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(button);
         }
         var mediaButton = WithIcon(AsyncButton("Mounted disks", ShowMediaAsync, Error), "Mounted disks", Icons.Disk);
         mediaButton.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(mediaButton);
-        autoResize = Check("Fit resolution", false, _ => ScheduleResize());
+        var foldersButton = WithIcon(AsyncButton("Shared folders", () => new HostFoldersWindow(vm).ShowDialog(this), Error), "Shared folders", Icons.Folder);
+        foldersButton.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(foldersButton);
+        if (viewSettings is not null)
+        {
+            var settings = WithIcon(AsyncButton("View settings", () => viewSettings(this), Error), "View settings", Icons.Settings);
+            settings.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(settings);
+        }
+        autoResize = Check("Fit resolution", true, _ => ScheduleResize());
         autoResize.Margin = new Thickness(0, 0, 14, 6);
-        ToolTip.SetTip(autoResize, "Request a guest resolution matching this window, up to 1920×1080. Requires a compatible guest graphics driver.");
+        ToolTip.SetTip(autoResize, "Request a guest resolution matching this window's pixel size, up to 3840×2160 (4K). Requires a compatible guest graphics driver.");
         actions.Children.Add(autoResize);
+        var resolutionCap = Select("4K", ["1080p", "1440p", "4K"], value => { resolutionLimit = value switch { "1080p" => (1920, 1080), "1440p" => (2560, 1440), _ => (3840, 2160) }; ScheduleResize(); });
+        resolutionCap.Margin = new Thickness(0, 0, 8, 6); resolutionCap.MinWidth = 110;
+        Avalonia.Automation.AutomationProperties.SetName(resolutionCap, "Resolution cap"); ToolTip.SetTip(resolutionCap, "Resolution cap: lower to 1080p for less rendering and display-copy work. Used while Fit resolution is enabled."); actions.Children.Add(resolutionCap);
+        var resizeSetup = WithIcon(AsyncButton("Auto-fit setup", ShowResizeSetupAsync, Error), "Auto-fit setup", Icons.Settings);
+        resizeSetup.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(resizeSetup);
         shareClipboard = Check("Share text clipboard", vm.SharedClipboard, enabled =>
         {
-            if (display is { } connected) connected.ClipboardEnabled = enabled && vm.SharedClipboard;
+            if (display is { } connected) connected.ClipboardEnabled = enabled && ClipboardChannelAvailable;
+            if (agentClipboard is { } agent) agent.Enabled = enabled && ClipboardWindowActive;
             lastClipboard = null;
         });
-        shareClipboard.IsEnabled = vm.SharedClipboard;
         shareClipboard.Margin = new Thickness(0, 0, 8, 6);
         ToolTip.SetTip(shareClipboard, "Enable the guest clipboard channel in machine Settings → Sharing first, and install spice-vdagent inside Ubuntu. Text only; sync runs while this window is active.");
         actions.Children.Add(shareClipboard);
+        clipboardSetup = WithIcon(AsyncButton("Set up clipboard", ShowClipboardSetupAsync, Error), "Set up clipboard", Icons.Settings);
+        clipboardSetup.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(clipboardSetup);
+        RefreshClipboardControls();
+        if (UsesNativeGpu)
+        {
+            nativeSurface!.KeyboardError += message => status.Text = "Keyboard disconnected: " + message + " Use Reconnect.";
+            autoResize.IsVisible = resolutionCap.IsVisible = resizeSetup.IsVisible = false;
+            integration.Text = "GPU rendering · Window size is forwarded to Ubuntu automatically";
+            var keyboard = WithIcon(Button("Capture keyboard", () => nativeSurface!.FocusGuest()), "Capture keyboard", Icons.Keyboard);
+            keyboard.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(keyboard);
+        }
         clipboardTimer.Tick += async (_, _) =>
         {
+            if (UsesNativeGpu) { await SyncAgentClipboardAsync(); return; }
             if (syncingClipboard || !IsActive || Clipboard is null || display is not { ClipboardEnabled: true } connected) return;
             syncingClipboard = true;
             try
@@ -80,20 +123,26 @@ public sealed partial class GuestWindow : Window
         };
         clipboardTimer.Start();
         surface.SizeChanged += (_, _) => ScheduleResize();
+        ScalingChanged += (_, _) => ScheduleResize();
         resizeTimer.Tick += async (_, _) =>
         {
-            resizeTimer.Stop();
-            if (autoResize.IsChecked != true || display is not { SupportsResize: true } connected) return;
-            var target = ((int)Math.Clamp(surface.Bounds.Width, 640, 1920), (int)Math.Clamp(surface.Bounds.Height, 480, 1080));
-            if (target == lastRequested) return;
-            lastRequested = target;
-            try { await connected.ResizeAsync(target.Item1, target.Item2, closing.Token); integration.Text = "Resolution requested; the guest decides when to apply it."; }
+            if (autoResize.IsChecked != true) { resizeTimer.Stop(); return; }
+            if (sendingResize) return;
+            if (display is not { SupportsResize: true } connected) { integration.Text = "Waiting for guest resize support. Use Auto-fit setup if this persists."; return; }
+            var target = GuestSurface.DesiredResolution(surface.Bounds.Size, RenderScaling, resolutionLimit.Width, resolutionLimit.Height);
+            var request = autoFit.ShouldRequest(target, (connected.Width, connected.Height), Environment.TickCount64);
+            integration.Text = autoFit.Status;
+            if (!request) return;
+            sendingResize = true;
+            try { await connected.ResizeAsync(target.Item1, target.Item2, closing.Token); }
             catch (Exception ex) when (!closing.IsCancellationRequested) { integration.Text = ex.Message; }
             catch (Exception) when (closing.IsCancellationRequested) { }
+            finally { sendingResize = false; }
         };
         var layout = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
         layout.Children.Add(new Border { Padding = new Thickness(16, 12, 8, 6), Child = actions });
-        Grid.SetRow(surface, 1); layout.Children.Add(surface);
+        Control viewport = nativeSurface is { } gpu ? gpu : surface;
+        Grid.SetRow(viewport, 1); layout.Children.Add(viewport);
         var footer = Stack(status, integration, Muted("Click the display to type · Ctrl+Alt+G releases input · Closing this window keeps the guest running")); footer.Spacing = 4;
         var bottom = new Border { Background = Brush.Parse("#191E17"), Padding = new Thickness(16, 9), Child = footer }; Grid.SetRow(bottom, 2); layout.Children.Add(bottom);
         Content = layout; Chrome.Frame(this);
@@ -101,11 +150,12 @@ public sealed partial class GuestWindow : Window
         manager.Changed += OnStateChanged;
         Opened += async (_, _) => await ConnectAsync();
         Deactivated += (_, _) => surface.ReleaseInput();
-        Closed += (_, _) => { manager.Changed -= OnStateChanged; resizeTimer.Stop(); clipboardTimer.Stop(); closing.Cancel(); display?.Dispose(); surface.Dispose(); };
+        Closing += (_, _) => nativeSurface?.Detach();
+        Closed += (_, _) => { manager.Changed -= OnStateChanged; resizeTimer.Stop(); clipboardTimer.Stop(); closing.Cancel(); display?.Dispose(); agentClipboard?.Dispose(); surface.Dispose(); };
     }
-    private void ScheduleResize() { resizeTimer.Stop(); if (autoResize.IsChecked == true) resizeTimer.Start(); }
+    private void ScheduleResize() { if (UsesNativeGpu) return; resizeTimer.Stop(); autoFit.Reset(); if (autoResize.IsChecked == true) resizeTimer.Start(); else integration.Text = "Auto-fit off. The current guest resolution is scaled to the window."; }
     private void Error(Exception ex) => status.Text = ex.Message;
-    public async Task ShowSessionAsync(VmConfig machine) { vm = machine; Title = vm.Name + " — Qemik"; await ConnectAsync(); }
+    public async Task ShowSessionAsync(VmConfig machine) { var hadChannel = shareClipboard.IsVisible; vm = machine; Title = vm.Name + " — Qemik"; RefreshClipboardControls(); if (!hadChannel && ClipboardChannelAvailable) shareClipboard.IsChecked = true; await ConnectAsync(); }
     private void OnStateChanged() => Dispatcher.UIThread.Post(() =>
     {
         if (closing.IsCancellationRequested) return;
@@ -116,13 +166,29 @@ public sealed partial class GuestWindow : Window
     private async Task ConnectAsync()
     {
         if (connecting || closing.IsCancellationRequested) return;
+        if (nativeSurface is not null)
+        {
+            connecting = true;
+            try
+            {
+                var session = manager.Session(vm.Id);
+                if (session?.Active != true) { status.Text = "Start this machine from the library."; return; }
+                await nativeSurface.AttachAsync(session.Process, closing.Token, session.Qmp);
+                await ConnectAgentClipboardAsync();
+                status.Text = manager.State(vm.Id) + " · " + vm.Accelerator.ToUpperInvariant() + " · Native GPU surface";
+            }
+            catch (Exception ex) when (!closing.IsCancellationRequested) { Error(ex); }
+            catch (Exception) when (closing.IsCancellationRequested) { }
+            finally { connecting = false; }
+            return;
+        }
         if (manager.Session(vm.Id)?.GuestPort is not { } port || !manager.IsRunning(vm.Id)) { status.Text = "Start this machine with the Qemik guest window display selected."; return; }
         connecting = true;
         try
         {
             surface.ReleaseInput(); display?.Dispose(); display = await GuestDisplayClient.ConnectAsync(port, closing.Token); surface.Connect(display);
-            lastRequested = default; resizeAvailable = false;
-            lastClipboard = null; display.ClipboardEnabled = vm.SharedClipboard && shareClipboard.IsChecked == true;
+            autoFit.Reset(); resizeAvailable = false; ScheduleResize();
+            lastClipboard = null; display.ClipboardEnabled = ClipboardChannelAvailable && shareClipboard.IsChecked == true;
             var clipboardConnection = display;
             display.ClipboardReceived = async text =>
             {
@@ -147,7 +213,6 @@ public sealed partial class GuestWindow : Window
             {
                 if (closing.IsCancellationRequested || display != connection) return;
                 surface.Present(frame); status.Text = manager.State(vm.Id) + " · " + vm.Accelerator.ToUpperInvariant() + $" · {frame.Width} × {frame.Height}";
-                if (autoResize.IsChecked == true) integration.Text = connection.ResizeStatus;
                 if (!resizeAvailable && connection.SupportsResize) { resizeAvailable = true; ScheduleResize(); }
             }), closing.Token);
         }

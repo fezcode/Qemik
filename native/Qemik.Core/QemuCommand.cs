@@ -56,7 +56,7 @@ public sealed record QemuCommand(string Executable, IReadOnlyList<string> Argume
             throw new InvalidDataException("Qemik reserves QMP, monitor, process, and configuration-file options for lifecycle management.");
     }
     public static string[] Extra(VmConfig vm) => vm.ExtraArguments.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-    public static QemuCommand Build(VmConfig vm, Preferences prefs, int? qmpPort = null, int? guestPort = null)
+    public static QemuCommand Build(VmConfig vm, Preferences prefs, int? qmpPort = null, int? guestPort = null, int? clipboardPort = null)
     {
         Validate(vm);
         var dir = AppPaths.VmDirectory(prefs, vm.Id);
@@ -89,7 +89,10 @@ public sealed record QemuCommand(string Executable, IReadOnlyList<string> Argume
         // Disable the machine's implicit VGA device: only the selected device should be present.
         if (vm.Architecture is "x86_64" or "i386" or "ppc") Add("-vga", "none");
         var acceleratedVideo = vm.Video is "virtio-vga-gl" or "virtio-gpu-gl-pci" or "virtio-gpu-gl-device";
-        Add("-display", acceleratedVideo ? (vm.Display is "qemik" or "vnc" or "none" ? "egl-headless" : vm.Display + ",gl=on") : vm.Display is "vnc" or "qemik" ? "none" : vm.Display);
+        var displayBackend = acceleratedVideo ? (vm.Display is "qemik" or "vnc" or "none" ? "egl-headless" : vm.Display + ",gl=on") : vm.Display is "vnc" or "qemik" ? "none" : vm.Display;
+        // SDL's close button otherwise terminates QEMU without a guest shutdown.
+        if (vm.Display == "sdl") displayBackend += ",window-close=off";
+        Add("-display", displayBackend);
         if (vm.Display == "qemik") Add("-vnc", $"127.0.0.1:{(guestPort ?? 5900 + vm.VncDisplay) - 5900}");
         if (vm.Display == "vnc") Add("-vnc", $"127.0.0.1:{vm.VncDisplay}");
         if (vm.Fullscreen && vm.Display is "sdl" or "gtk") args.Add("-full-screen");
@@ -102,7 +105,9 @@ public sealed record QemuCommand(string Executable, IReadOnlyList<string> Argume
         if (vm.SharedClipboard)
         {
             Add("-device", "virtio-serial-pci,id=clipboard-serial");
-            Add("-chardev", "qemu-vdagent,id=clipboard-agent,name=vdagent,clipboard=on,mouse=off");
+            Add("-chardev", clipboardPort.HasValue
+                ? $"socket,id=clipboard-agent,host=127.0.0.1,port={clipboardPort.Value},server=on,wait=off"
+                : "qemu-vdagent,id=clipboard-agent,name=vdagent,clipboard=on,mouse=off");
             Add("-device", "virtserialport,bus=clipboard-serial.0,chardev=clipboard-agent,name=com.redhat.spice.0");
         }
         if (vm.Network == "none") Add("-nic", "none");

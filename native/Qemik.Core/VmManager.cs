@@ -13,6 +13,11 @@ public sealed class VmSession : IDisposable
     public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
     public string? Error { get; set; }
     public int? GuestPort { get; init; }
+    public int? ClipboardPort { get; init; }
+    public bool ClipboardChannel { get; init; }
+    internal VmConfig? StartedConfiguration { get; init; }
+    public string? DisplayBackend => StartedConfiguration?.Display;
+    public string LaunchCommand { get; init; } = "";
     public bool Active => !Process.HasExited;
     public void Dispose() { Qmp?.Dispose(); Process.Dispose(); }
 }
@@ -34,6 +39,7 @@ public sealed partial class VmManager : IDisposable
         try
         {
             if (IsRunning(vm.Id)) throw new InvalidOperationException("This virtual machine is already running.");
+            if (vm.IsBlueprint) throw new InvalidOperationException("Create a virtual machine from this blueprint before starting it.");
             QemuCommand.Validate(vm);
             var exe = Path.Combine(prefs.QemuDirectory, $"qemu-system-{vm.Architecture}.exe");
             if (!File.Exists(exe)) throw new FileNotFoundException("Install QEMU or choose its installation folder in QEMU Engine.", exe);
@@ -49,8 +55,8 @@ public sealed partial class VmManager : IDisposable
             if (vm.SharedFolder.Length > 0)
             {
                 if (!Directory.Exists(vm.SharedFolder)) throw new DirectoryNotFoundException("The shared folder does not exist.");
-                var help = await ProcessRunner.RunAsync(exe, ["-help"]);
-                if (!help.Contains("-virtfs", StringComparison.Ordinal)) throw new NotSupportedException("This QEMU build has no VirtFS/9p support. Clear the shared folder and use a guest network share instead.");
+                var devices = await ProcessRunner.RunAsync(exe, ["-device", "help"]);
+                if (!devices.Contains("virtio-9p-", StringComparison.Ordinal)) throw new NotSupportedException("This QEMU build has no VirtFS/9p device. Clear the VirtFS folder and use Shared folders instead.");
             }
             if (vm.Accelerator == "whpx")
             {
@@ -66,7 +72,13 @@ public sealed partial class VmManager : IDisposable
                 var displayListener = new TcpListener(IPAddress.Loopback, 0); displayListener.Start();
                 guestPort = ((IPEndPoint)displayListener.LocalEndpoint).Port; displayListener.Stop();
             }
-            var command = QemuCommand.Build(vm, prefs, port, guestPort);
+            int? clipboardPort = null;
+            if (vm.SharedClipboard && vm.Display == "sdl")
+            {
+                var clipboardListener = new TcpListener(IPAddress.Loopback, 0); clipboardListener.Start();
+                clipboardPort = ((IPEndPoint)clipboardListener.LocalEndpoint).Port; clipboardListener.Stop();
+            }
+            var command = QemuCommand.Build(vm, prefs, port, guestPort, clipboardPort);
             await File.WriteAllTextAsync(Path.Combine(dir, "launch.ps1"), command.Preview);
             var logPath = Path.Combine(dir, "qemu.log");
             await File.WriteAllTextAsync(logPath, $"Qemik launch — {DateTimeOffset.Now:O}\n{command.Preview}\n\n");
@@ -88,7 +100,7 @@ public sealed partial class VmManager : IDisposable
             }
             process.OutputDataReceived += Log; process.ErrorDataReceived += Log;
             process.Start();
-            var session = new VmSession { Process = process, GuestPort = guestPort };
+            var session = new VmSession { Process = process, GuestPort = guestPort, ClipboardPort = clipboardPort, ClipboardChannel = vm.SharedClipboard, StartedConfiguration = vm.Clone(), LaunchCommand = command.Preview };
             if (sessions.TryRemove(vm.Id, out var previous)) previous.Dispose();
             sessions[vm.Id] = session;
             process.Exited += (_, _) => { session.State = "Stopped"; Changed?.Invoke(); };

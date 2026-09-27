@@ -22,6 +22,173 @@ public static class TestAppBuilder
 public sealed class DesktopTests
 {
     [AvaloniaFact]
+    public void GpuGuestWindowKeepsCustomControlsAndOffersAgentClipboard()
+    {
+        if (!OperatingSystem.IsWindows()) Assert.Skip("Windows native GPU hosting.");
+        using var manager = new VmManager();
+        var vm = new VmConfig { Display = "sdl", Video = "virtio-vga-gl", SharedClipboard = true };
+        var window = new GuestWindow(vm, manager, viewSettings: _ => Task.CompletedTask); window.Show(); Layout(window);
+        Assert.True(window.UsesNativeGpu); Assert.Single(window.GetVisualDescendants().OfType<NativeGpuSurface>());
+        var names = window.GetVisualDescendants().OfType<Button>().Select(b => Avalonia.Automation.AutomationProperties.GetName(b)).ToArray();
+        foreach (var name in new[] { "Pause", "Shut down", "Force shutdown", "Fullscreen", "Mounted disks", "Shared folders", "View settings" }) Assert.Contains(name, names);
+        Assert.DoesNotContain(window.GetVisualDescendants().OfType<CheckBox>(), b => b.IsVisible && b.Content as string == "Fit resolution");
+        Assert.Contains(window.GetVisualDescendants().OfType<CheckBox>(), b => b.IsVisible && b.Content as string == "Share text clipboard");
+        Assert.Contains("Capture keyboard", names);
+        Screenshot(window, "custom-gpu-window-controls"); window.Close();
+    }
+    [AvaloniaFact]
+    public void NativeGpuPresetSelectsCompatibleDisplayAndOffersRecovery()
+    {
+        var vm = new VmConfig { Name = "GPU fixture" }; using var manager = new VmManager();
+        var window = new SettingsWindow(vm, new Preferences(), manager); window.Show(); window.ShowSection("Display"); Layout(window);
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Use host GPU (custom window)").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Layout(window); Assert.Equal("sdl", vm.Display); Assert.Equal("virtio-vga-gl", vm.Video);
+        Screenshot(window, "native-gpu-settings");
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Use integrated 2D display").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("qemik", vm.Display); Assert.Equal("virtio-vga", vm.Video); window.Close();
+    }
+    [AvaloniaFact]
+    public async Task RunningSettingsShowStartedHardwareAndLiveMediaWithoutEditing()
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for running settings validation.");
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var prefs = store.LoadPreferences(); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!; store.SavePreferences(prefs);
+        var iso = Path.Combine(store.Root, "fixture.iso"); await File.WriteAllBytesAsync(iso, new byte[4096]);
+        var vm = new VmConfig { Name = "Read-only settings fixture", MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S", Drives = [new() { Path = iso, CdRom = true, Format = "raw", Interface = "ide", ReadOnly = true }] }; store.Save(vm);
+        MainWindow? main = null; SettingsWindow? settings = null;
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            vm.MemoryMiB = 8192; vm.SharedClipboard = true; store.Save(vm); // Only future-start settings change.
+            await manager.ChangeMediumAsync(vm.Id, "drive0", null);
+            var current = await manager.RunningConfigurationAsync(vm.Id); Assert.Equal(256, current.MemoryMiB); Assert.False(current.SharedClipboard); Assert.Empty(current.Drives.Single().Path);
+            main = new MainWindow(store, manager); main.Show(); main.ShowVm(vm.Id); Layout(main);
+            var open = main.GetVisualDescendants().OfType<Button>().Single(b => Avalonia.Automation.AutomationProperties.GetName(b) == "View settings"); Assert.True(open.IsEnabled); open.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump(); settings = Assert.IsType<SettingsWindow>(Assert.Single(main.OwnedWindows)); Assert.True(settings.IsReadOnly);
+            foreach (var section in SettingsWindow.Sections)
+            {
+                settings.ShowSection(section); Layout(settings);
+                Assert.All(settings.GetVisualDescendants().OfType<TextBox>(), b => Assert.True(b.IsReadOnly));
+                Assert.Empty(settings.GetVisualDescendants().OfType<ComboBox>()); Assert.Empty(settings.GetVisualDescendants().OfType<NumericUpDown>()); Assert.Empty(settings.GetVisualDescendants().OfType<CheckBox>());
+                Assert.DoesNotContain(settings.GetVisualDescendants().OfType<Button>(), b => b.Content as string is "Save settings" or "Detach" or "Browse…");
+                if (section == "System") { Assert.Contains(settings.GetVisualDescendants().OfType<TextBox>(), b => b.Text == "256"); Screenshot(settings, "running-settings-system"); }
+                if (section == "Drives") Assert.Contains(settings.GetVisualDescendants().OfType<TextBox>(), b => b.Text == "Empty drive");
+                if (section == "Display") Screenshot(settings, "running-settings-display");
+            }
+            settings.Close(); await Pump(); Assert.True(manager.IsRunning(vm.Id)); Assert.Equal(8192, store.List().Single().MemoryMiB); Assert.Equal(iso, store.List().Single().Drives.Single().Path);
+        }
+        finally { settings?.Close(); if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); main?.Close(); }
+    }
+    [AvaloniaFact]
+    public async Task PasswordFreeFolderUiCreatesLocalShareWithoutWindowsPrompt()
+    {
+        var root = CoreTests.TestDirectory(); var selected = Path.Combine(root, "Files"); Directory.CreateDirectory(selected);
+        await using var service = new LocalFolderSharing(Path.Combine(root, "config"));
+        var vm = new VmConfig { Name = "Ubuntu Desktop" }; var window = new HostFoldersWindow(vm, service); window.Show(); await Pump(); Layout(window);
+        window.GetVisualDescendants().OfType<TextBox>().Single(b => b.IsReadOnly).Text = selected;
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Share folder…").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); Layout(window);
+        var share = Assert.Single(await service.ListAsync(vm.Id)); Assert.StartsWith("dav://10.0.2.2:", share.Address); Assert.Contains("Read-only", share.Access);
+        Assert.Empty(window.OwnedWindows);
+        Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == share.Address);
+        Screenshot(window, "shared-folders-no-password"); window.Close();
+    }
+    [AvaloniaFact]
+    public async Task BlueprintUiCreatesBatchAndPreventsStartingSource()
+    {
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var vm = new VmConfig { Name = "Ubuntu blueprint" }; store.Save(vm);
+        var window = new MainWindow(store, manager); window.Show(); window.ShowVm(vm.Id); Layout(window);
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Set as blueprint").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); Assert.True(Assert.Single(store.List()).IsBlueprint); Layout(window);
+        Screenshot(window, "blueprint-details");
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Create VM from blueprint").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); var dialog = Assert.Single(window.OwnedWindows); Layout(dialog);
+        dialog.GetVisualDescendants().OfType<NumericUpDown>().Single().Value = 2;
+        Screenshot(dialog, "blueprint-copy");
+        dialog.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Create machines").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); Assert.Equal(3, store.List().Count); Assert.Equal(2, store.List().Count(v => !v.IsBlueprint)); Assert.Empty(window.OwnedWindows);
+        window.Close();
+    }
+    [AvaloniaFact]
+    public async Task SharedFoldersUiListsAddressesAndConfirmsRemoval()
+    {
+        var sharing = new FixtureSharing(); var window = new HostFoldersWindow(new VmConfig { Name = "Ubuntu Desktop" }, sharing);
+        window.Show(); await Pump(); Layout(window); Screenshot(window, "shared-folders");
+        Assert.True(window.GetVisualDescendants().OfType<CheckBox>().Single().IsChecked);
+        Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text == "smb://10.0.2.2/Qemik_fixture_Files");
+        window.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Stop sharing…").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); var dialog = Assert.Single(window.OwnedWindows); Layout(dialog);
+        dialog.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Stop sharing").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await Pump(); Assert.True(sharing.Removed); window.Close();
+    }
+    private sealed class FixtureSharing : IHostFolderSharing
+    {
+        public string Account => @"HOST\User";
+        public bool Removed { get; private set; }
+        public Task<IReadOnlyList<HostFolderShare>> ListAsync(string id) => Task.FromResult<IReadOnlyList<HostFolderShare>>(Removed ? [] : [new("Qemik_fixture_Files", @"D:\Documents", @"HOST\User: Read")]);
+        public Task CreateAsync(string id, string name, string path, bool readOnly) => throw new NotSupportedException();
+        public Task RemoveAsync(string id, HostFolderShare share) { Removed = true; return Task.CompletedTask; }
+    }
+    [AvaloniaFact]
+    public async Task ClipboardSetupSavesForNextStartWithoutPretendingRunningChannelExists()
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for clipboard setup validation.");
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var prefs = store.LoadPreferences(); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!;
+        var vm = new VmConfig { Name = "Clipboard setup fixture", MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S" }; store.Save(vm);
+        GuestWindow? window = null;
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            window = new GuestWindow(vm, manager, () => { var saved = store.List().Single(); saved.SharedClipboard = true; store.Save(saved); return Task.CompletedTask; });
+            window.Show(); Layout(window);
+            var toggle = window.GetVisualDescendants().OfType<CheckBox>().Single(b => b.Content as string == "Share text clipboard"); Assert.False(toggle.IsVisible);
+            window.GetVisualDescendants().OfType<Button>().Single(b => Avalonia.Automation.AutomationProperties.GetName(b) == "Set up clipboard").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump(); var dialog = Assert.Single(window.OwnedWindows); Layout(dialog); Screenshot(dialog, "clipboard-setup");
+            dialog.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Enable for next start").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump(); Assert.True(store.List().Single().SharedClipboard); Assert.True(manager.IsRunning(vm.Id));
+            Assert.False(manager.Session(vm.Id)!.ClipboardChannel); Assert.False(toggle.IsVisible);
+            await window.ShowSessionAsync(store.List().Single()); Assert.False(toggle.IsVisible);
+            await manager.ForceStopAsync(vm.Id); await manager.StartAsync(store.List().Single(), prefs);
+            await window.ShowSessionAsync(store.List().Single()); Layout(window);
+            Assert.True(toggle.IsVisible); Assert.True(toggle.IsEnabled); Assert.True(toggle.IsChecked);
+            Assert.True(manager.Session(vm.Id)!.ClipboardChannel);
+        }
+        finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); window?.Close(); }
+    }
+    [AvaloniaTheory]
+    [InlineData("library")]
+    [InlineData("details")]
+    [InlineData("guest")]
+    public async Task ForceShutdownImmediatelyStopsDisposableGuestWithoutConfirmation(string location)
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for force shutdown UI validation.");
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var prefs = store.LoadPreferences(); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!; store.SavePreferences(prefs);
+        var vm = new VmConfig { Name = "Ubuntu Desktop shutdown fixture", MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S" }; store.Save(vm);
+        Window? window = null;
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            window = location == "guest" ? new GuestWindow(vm, manager) : new MainWindow(store, manager);
+            window.Show(); if (location == "details") ((MainWindow)window).ShowVm(vm.Id); Layout(window);
+            Assert.Contains(window.GetVisualDescendants().OfType<Button>(), b => b.Content as string == "Shut down" || Avalonia.Automation.AutomationProperties.GetName(b) == "Shut down");
+            if (location == "library") Screenshot(window, "library-force-shutdown");
+            window.GetVisualDescendants().OfType<Button>().Single(b => Avalonia.Automation.AutomationProperties.GetName(b) == "Force shutdown").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (manager.IsRunning(vm.Id) && DateTime.UtcNow < deadline) await Pump();
+            await Pump(); Assert.False(manager.IsRunning(vm.Id)); Assert.Empty(window.OwnedWindows);
+            if (location == "guest") Assert.False(window.IsVisible);
+            else
+            {
+                ((MainWindow)window).ShowLibrary(); Layout(window);
+                Assert.DoesNotContain(window.GetVisualDescendants().OfType<Button>(), b => Avalonia.Automation.AutomationProperties.GetName(b) == "Force shutdown");
+            }
+        }
+        finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); window?.Close(); }
+    }
+    [AvaloniaFact]
     public async Task MountedMediaDialogShowsLiveDrivesAndConfirmsEjection()
     {
         if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for live media dialog validation.");

@@ -30,6 +30,16 @@ public sealed class LibraryStore : IDisposable
         using var cmd = db.CreateCommand(); cmd.CommandText = "INSERT INTO vms VALUES($id,$config) ON CONFLICT(id) DO UPDATE SET config=$config";
         cmd.Parameters.AddWithValue("$id", vm.Id); cmd.Parameters.AddWithValue("$config", JsonSerializer.Serialize(vm)); cmd.ExecuteNonQuery();
     }
+    public void EnableAudioPlayback(string id)
+    {
+        var vm = List().Single(v => v.Id == id);
+        if (vm.Architecture is not ("x86_64" or "i386")) throw new InvalidOperationException("Intel HD Audio setup requires an x86 machine.");
+        // Update only the requested fields, preserving other settings in an open library.
+        using var cmd = db.CreateCommand();
+        cmd.CommandText = "UPDATE vms SET config=json_set(config,'$.Audio','intel-hda','$.AudioCapture',json('false')) WHERE id=$id";
+        cmd.Parameters.AddWithValue("$id", id);
+        if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException("The machine is no longer in the library.");
+    }
     // Removing a library record never deletes a user's disk images or firmware.
     public void Remove(string id)
     {

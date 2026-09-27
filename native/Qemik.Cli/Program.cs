@@ -7,6 +7,40 @@ try
 {
     var command = args.FirstOrDefault() ?? "help";
     string? Option(string name) { var index = Array.IndexOf(args, name); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
+    if (command == "enable-gpu")
+    {
+        if (System.Diagnostics.Process.GetProcesses().Any(p => { using (p) return p.ProcessName.StartsWith("qemu-system-", StringComparison.OrdinalIgnoreCase); }))
+            throw new InvalidOperationException("Shut down QEMU guests before configuring GPU acceleration.");
+        var root = Option("--data-dir") ?? AppPaths.DefaultRoot; Directory.CreateDirectory(root);
+        using var appLock = new FileStream(Path.Combine(root, "app.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var library = new LibraryStore(root);
+        var guest = library.List().Single(v => v.Id == Option("--vm"));
+        var original = JsonSerializer.Serialize(guest, new JsonSerializerOptions { WriteIndented = true });
+        GraphicsProfiles.UseNativeGpu(guest);
+        var backup = Path.Combine(root, "configuration-before-gpu-" + guest.Id + "-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(backup, original); library.Save(guest);
+        Console.WriteLine($"Enabled native VirGL/OpenGL graphics for {guest.Name}. Start it in Qemik. Configuration backup: {backup}"); return 0;
+    }
+    if (command == "share-folder")
+    {
+        using var library = new LibraryStore(Option("--data-dir"));
+        using var appLock = new FileStream(Path.Combine(library.Root, "app.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var guest = library.List().Single(v => v.Id == Option("--vm"));
+        await using var sharing = new LocalFolderSharing(library.Root);
+        await sharing.CreateAsync(guest.Id, Option("--name") ?? "Files", Option("--folder") ?? throw new ArgumentException("Choose --folder."), !args.Contains("--write"));
+        Console.WriteLine("Saved password-free share. Open Qemik, then use Shared folders to copy its Ubuntu address. Existing Windows SMB shares are unchanged."); return 0;
+    }
+    if (command == "enable-audio")
+    {
+        var runningQemu = System.Diagnostics.Process.GetProcesses().Any(p => { using (p) return p.ProcessName.StartsWith("qemu-system-", StringComparison.OrdinalIgnoreCase); });
+        if (runningQemu) throw new InvalidOperationException("Shut down QEMU guests before configuring audio.");
+        using var library = new LibraryStore(Option("--data-dir"));
+        var guest = library.List().Single(v => v.Id == Option("--vm"));
+        var backup = Path.Combine(library.Root, "configuration-before-audio-" + guest.Id + "-" + Guid.NewGuid().ToString("N") + ".json");
+        await File.WriteAllTextAsync(backup, JsonSerializer.Serialize(guest, new JsonSerializerOptions { WriteIndented = true }));
+        library.EnableAudioPlayback(guest.Id);
+        Console.WriteLine($"Enabled Intel HD Audio playback for {guest.Name}. Reopen Qemik before starting the guest so it loads the saved settings. Backup: {backup}"); return 0;
+    }
     if (command == "configure-guest")
     {
         using var library = new LibraryStore(Option("--data-dir"));
@@ -48,7 +82,7 @@ try
         finally { if (vmManager.IsRunning(guest.Id)) await vmManager.ForceStopAsync(guest.Id); }
         return 0;
     }
-    if (command is not ("catalog" or "prepare-ubuntu")) { Console.WriteLine("Qemik image tools\n  catalog\n  prepare-ubuntu [--data-dir folder] [--images-dir folder] [--qemu-dir folder]\n  configure-guest --vm id [--data-dir folder]\n  diagnose-boot --vm id [--data-dir folder] [--output folder] [--frames 6] [--accel tcg|whpx] [--cpu name] [--video device] [--bios]\nprepare-ubuntu downloads and verifies Ubuntu LTS and creates a VM with its installer mounted. configure-guest selects the best available x86 accelerator and dedicated display; close the app first. diagnose-boot starts a disposable ISO-only guest, captures a screen every 20 seconds, then stops it. It never opens existing writable guest disks."); return 0; }
+    if (command is not ("catalog" or "prepare-ubuntu")) { Console.WriteLine("Qemik image tools\n  enable-gpu --vm id [--data-dir folder]\n  share-folder --vm id --folder path [--name Files] [--write] [--data-dir folder]\n  enable-audio --vm id [--data-dir folder]\n  catalog\n  prepare-ubuntu [--data-dir folder] [--images-dir folder] [--qemu-dir folder]\n  configure-guest --vm id [--data-dir folder]\n  diagnose-boot --vm id [--data-dir folder] [--output folder] [--frames 6] [--accel tcg|whpx] [--cpu name] [--video device] [--bios]\nprepare-ubuntu downloads and verifies Ubuntu LTS and creates a VM with its installer mounted. configure-guest selects the best available x86 accelerator and dedicated display; close the app first. diagnose-boot starts a disposable ISO-only guest, captures a screen every 20 seconds, then stops it. It never opens existing writable guest disks."); return 0; }
     using var images = new OsImages(); var catalog = await images.RefreshAsync(cancellation.Token);
     foreach (var warning in images.RefreshWarnings) Console.Error.WriteLine(warning);
     if (command == "catalog") { Console.WriteLine(JsonSerializer.Serialize(catalog, new JsonSerializerOptions { WriteIndented = true })); return 0; }

@@ -5,6 +5,25 @@ namespace Qemik.Tests;
 
 public sealed class LiveQemuTests
 {
+    [Fact]
+    public async Task NativeGpuDisplayStartsWithoutVncAndKeepsQmpControls()
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in for the native SDL GPU display check.");
+        var prefs = CoreTests.Prefs(CoreTests.TestDirectory()); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!;
+        var vm = new VmConfig { MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S" }; GraphicsProfiles.UseNativeGpu(vm);
+        using var manager = new VmManager();
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            var session = manager.Session(vm.Id)!;
+            Assert.Null(session.GuestPort); Assert.Equal("sdl", session.DisplayBackend);
+            Assert.Contains("window-close=off", session.LaunchCommand);
+            await manager.ControlAsync(vm.Id, "stop"); Assert.Equal("Paused", manager.State(vm.Id));
+            Assert.Equal("virtio-vga-gl", (await manager.RunningConfigurationAsync(vm.Id)).Video);
+            await manager.ControlAsync(vm.Id, "cont"); Assert.True(manager.IsRunning(vm.Id));
+        }
+        finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); }
+    }
     [Theory]
     [InlineData("virtio-vga")]
     [InlineData("virtio-vga-gl")]

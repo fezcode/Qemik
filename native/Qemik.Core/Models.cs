@@ -6,6 +6,7 @@ public sealed class VmConfig
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Name { get; set; } = "New virtual machine";
+    public bool IsBlueprint { get; set; }
     public string Description { get; set; } = "";
     public string Guest { get; set; } = "Linux";
     public string Architecture { get; set; } = "x86_64";
@@ -54,6 +55,7 @@ public sealed class VmConfig
     public void SetArchitecture(string architecture)
     {
         Architecture = architecture; Accelerator = "tcg";
+        if (architecture is not ("x86_64" or "i386")) { Audio = "none"; AudioCapture = false; }
         (Machine, Cpu, Video) = architecture switch
         {
             "aarch64" => ("virt", "cortex-a72", "virtio-gpu-pci"),
@@ -69,6 +71,7 @@ public sealed class VmConfig
     {
         Guest = guest, Name = guest == "Other" ? "New virtual machine" : guest,
         MemoryMiB = guest == "Windows" ? 8192 : 4096,
+        Audio = guest is "Linux" or "Windows" ? "intel-hda" : "none",
         Video = guest == "Windows" ? "VGA" : "virtio-vga",
         NetworkCard = guest == "Windows" ? "e1000e" : "virtio-net-pci"
     };

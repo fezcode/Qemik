@@ -4,6 +4,16 @@ public sealed record MountedDrive(string Device, string Path, bool Removable, bo
 
 public sealed partial class VmManager
 {
+    public async Task<VmConfig> RunningConfigurationAsync(string id)
+    {
+        var session = Session(id);
+        if (session is not { Active: true, StartedConfiguration: { } started }) throw new InvalidOperationException("This machine is no longer running.");
+        var current = started.Clone();
+        foreach (var drive in await MountedDrivesAsync(id))
+            if (int.TryParse(drive.Device.AsSpan(5), out var index) && index >= 0 && index < current.Drives.Count)
+            { current.Drives[index].Path = drive.Path; current.Drives[index].ReadOnly = drive.ReadOnly || current.Drives[index].CdRom; }
+        return current;
+    }
     private QmpClient RunningControl(string id) => Session(id) is { Active: true, Qmp: { } control } ? control : throw new InvalidOperationException("Start the machine to manage its mounted media.");
     public async Task<IReadOnlyList<MountedDrive>> MountedDrivesAsync(string id)
     {

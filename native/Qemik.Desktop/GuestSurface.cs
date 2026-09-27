@@ -45,6 +45,12 @@ public sealed class GuestSurface : Control, IDisposable
         var scale = Math.Min(bounds.Width / width, bounds.Height / height);
         return new Rect((bounds.Width - width * scale) / 2, (bounds.Height - height * scale) / 2, width * scale, height * scale);
     }
+    public static (int Width, int Height) DesiredResolution(Size bounds, double renderScaling, int maxWidth = 3840, int maxHeight = 2160)
+    {
+        var width = Math.Max(1, bounds.Width * renderScaling); var height = Math.Max(1, bounds.Height * renderScaling);
+        var fit = Math.Min(1, Math.Min(maxWidth / width, maxHeight / height));
+        return ((int)Math.Clamp(Math.Round(width * fit), 640, maxWidth), (int)Math.Clamp(Math.Round(height * fit), 480, maxHeight));
+    }
     public override void Render(DrawingContext context)
     {
         context.FillRectangle(Brushes.Black, new Rect(Bounds.Size));

@@ -10,6 +10,7 @@ internal static class Icons
     public const string Reconnect = "M2 7A7 7 0 0 1 15 5 M15 1V5H11 M16 11A7 7 0 0 1 3 13 M3 17V13H7";
     public const string Stop = "M3 3H15V15H3Z";
     public const string Eject = "M4 11L9 4L14 11Z M3 15H15";
+    public const string Folder = "M1 4H7L9 6H17V16H1Z M1 4V2H7L9 4H15V6";
     public const string Library = "M1 1H7V7H1Z M11 1H17V7H11Z M1 11H7V17H1Z M11 11H17V17H11Z";
     public const string Cpu = "M4 4H14V14H4Z M7 7H11V11H7Z M6 0V4 M12 0V4 M6 14V18 M12 14V18 M0 6H4 M0 12H4 M14 6H18 M14 12H18";
     public const string Monitor = "M1 2H17V13H1Z M9 13V17 M5 17H13";

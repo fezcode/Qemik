@@ -8,7 +8,7 @@ using static Qemik.Desktop.Ui;
 
 namespace Qemik.Desktop;
 
-public sealed class SettingsWindow : Window
+public sealed partial class SettingsWindow : Window
 {
     private readonly VmConfig vm;
     private readonly Preferences prefs;
@@ -17,15 +17,17 @@ public sealed class SettingsWindow : Window
     private readonly TextBlock message = Muted("Changes apply the next time this machine starts.");
     private string section = "General";
     private bool diskBusy;
+    public bool IsReadOnly { get; }
+    private readonly string? launchCommand;
     public static readonly string[] Sections = ["General", "System", "Boot", "Drives", "Display", "Network", "Sound", "USB & input", "Sharing", "Serial", "Advanced"];
-    public SettingsWindow(VmConfig vm, Preferences prefs, VmManager manager)
+    public SettingsWindow(VmConfig vm, Preferences prefs, VmManager manager, bool readOnly = false, string? launchCommand = null)
     {
-        this.vm = vm; this.prefs = prefs;
-        Title = "Settings — " + vm.Name; Width = 1020; Height = 800; MinWidth = 900; MinHeight = 650;
+        IsReadOnly = readOnly || manager.IsRunning(vm.Id); this.vm = IsReadOnly ? vm.Clone() : vm; this.prefs = prefs; this.launchCommand = launchCommand;
+        Title = (IsReadOnly ? "Current settings (read-only) — " : "Settings — ") + vm.Name; Width = 1020; Height = 800; MinWidth = 900; MinHeight = 650;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         var sidebar = Stack(Row(new Brand { Width = 30, Height = 30 }, Heading("Machine settings", 14)), navigation); sidebar.Spacing = 28;
         var content = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto"), RowSpacing = 20 };
-        content.Children.Add(Stack(Heading(vm.Name, 25), Muted("Every machine has its own personality.")));
+        content.Children.Add(Stack(Heading(vm.Name, 25), Muted(IsReadOnly ? "Running configuration · Read-only" : "Every machine has its own personality.")));
         Grid.SetRow(body, 1); content.Children.Add(body);
         var save = Button("Save settings", () =>
         {
@@ -37,7 +39,8 @@ public sealed class SettingsWindow : Window
             }
             catch (Exception ex) { Error(ex); }
         }, "primary");
-        var actions = Row(Button("Cancel", () => { if (!diskBusy) Close(false); }), save); actions.HorizontalAlignment = HorizontalAlignment.Right;
+        var actions = IsReadOnly ? Row(Button("Close", () => Close(false))) : Row(Button("Cancel", () => { if (!diskBusy) Close(false); }), save); actions.HorizontalAlignment = HorizontalAlignment.Right;
+        if (IsReadOnly) message.Text = "Settings captured when this window opened, including current mounted media. Shut down the VM to edit hardware.";
         var footer = Stack(message, actions); Grid.SetRow(footer, 2); content.Children.Add(footer);
         var layout = new Grid { ColumnDefinitions = new ColumnDefinitions("212,*") };
         layout.Children.Add(new Border { Background = Brush.Parse("#151715"), BorderBrush = Brush.Parse("#30362C"), BorderThickness = new Thickness(0, 0, 1, 0), Padding = new Thickness(16, 24, 0, 18), Child = Scroll(sidebar) });
@@ -55,7 +58,7 @@ public sealed class SettingsWindow : Window
             var icon = name switch { "System" => Icons.Cpu, "Drives" or "Boot" => Icons.Disk, "Display" or "General" => Icons.Monitor, "Network" or "Sharing" => Icons.Network, _ => Icons.Settings };
             var b = NavigationButton(name, icon, () => ShowSection(name)); if (name == section) b.Classes.Add("active"); navigation.Children.Add(b);
         }
-        Control panel = section switch
+        Control panel = IsReadOnly ? ReadOnlySection(section) : section switch
         {
             "General" => General(), "System" => SystemSettings(), "Boot" => Boot(), "Drives" => Drives(), "Display" => Display(), "Network" => Network(), "Sound" => Sound(), "USB & input" => Usb(), "Sharing" => Sharing(), "Serial" => Serial(), _ => Advanced()
         };
@@ -137,11 +140,17 @@ public sealed class SettingsWindow : Window
         return panel;
     }
     private Control Display() => Stack(
-        Field("Display backend", Select(vm.Display, ["qemik", "sdl", "gtk", "vnc", "none"], s => vm.Display = s), "qemik opens a dedicated guest window with input, scaling and power controls. SDL/GTK use external QEMU windows; vnc needs a separate viewer."),
+        Field("Display backend", Select(vm.Display, ["qemik", "sdl", "gtk", "vnc", "none"], s => vm.Display = s), "qemik opens a dedicated guest window with input, scaling and power controls. SDL uses a GPU-capable surface inside Qemik on Windows. GTK uses an external QEMU window; vnc needs a separate viewer."),
         Field("Emulated video card", Select(vm.Video, ["virtio-vga", "virtio-vga-gl", "VGA", "qxl", "virtio-gpu-pci", "virtio-gpu-gl-pci", "none"], s => vm.Video = s), "virtio-vga is 2D. virtio-vga-gl enables experimental VirGL 3D with an OpenGL display backend. Requires a compatible QEMU build and host graphics driver; revert to virtio-vga if it fails."),
+        GraphicsProfiles.SupportsNativeGpu(vm) ? Card(Stack(Heading("Host GPU acceleration", 17),
+            Muted("Run Linux graphics through your Windows GPU using VirGL inside the Qemik guest window. This avoids the integrated viewer's framebuffer copies. Modern Ubuntu includes the guest driver."),
+            Row(Button("Use host GPU (custom window)", () => { GraphicsProfiles.UseNativeGpu(vm); ShowSection(section); message.Text = "GPU display selected. Save and start the VM to open its custom guest window."; }, "primary"),
+                Button("Use integrated 2D display", () => { GraphicsProfiles.UseIntegratedDisplay(vm); ShowSection(section); message.Text = "Integrated 2D display selected. Save and start the VM to apply it."; })),
+            Muted("GPU mode includes the Qemik toolbar, fullscreen, power controls, mounted disks, shared folders and current settings. Closing the guest window keeps the VM running; Open reconnects it. Window resizing is forwarded to the guest automatically. Text clipboard uses spice-vdagent; enable Sharing and install the guest agent. Click the guest display or Capture keyboard to type."))) : Muted("VirGL guest support depends on its operating system and graphics driver."),
+        Muted("VirGL accelerates guest OpenGL through a virtual GPU. It does not expose the physical card for CUDA or GPU passthrough. On Windows, the integrated egl-headless path can fail even when native SDL acceleration works."),
         Check("Start in full screen (SDL / GTK)", vm.Fullscreen, b => vm.Fullscreen = b),
         Field("VNC display number", Number(vm.VncDisplay, 0, 99, n => vm.VncDisplay = n), "Display 1 uses TCP port 5901. Bound to 127.0.0.1, accessible only from this computer. Use a different display for each running VNC VM."),
-        Card(Muted("Enable Fit resolution in the Qemik guest window to request automatic resizing (up to 1920×1080). The guest graphics driver must accept the request. You can also use Ubuntu Settings → Displays. Lower resolutions reduce rendering cost.")));
+        Card(Muted("Enable Fit resolution in the Qemik guest window to request automatic resizing up to 3840×2160 (4K), accounting for Windows display scaling. The guest graphics driver must accept the request. You can also use Ubuntu Settings → Displays. Lower resolutions reduce rendering cost.")));
     private Control Network()
     {
         var panel = Stack(Field("Network mode", Select(vm.Network, ["user", "tap", "none"], s => vm.Network = s), "User = shared NAT with no administrator setup. TAP uses an existing adapter. None disconnects the guest."),
@@ -165,13 +174,15 @@ public sealed class SettingsWindow : Window
     {
         var path = Input(vm.SharedFolder, s => vm.SharedFolder = s);
         return Stack(Check("Share text clipboard with the guest", vm.SharedClipboard, b => vm.SharedClipboard = b),
-            Muted("Requires a full VM shutdown/start after enabling. Inside Ubuntu, install spice-vdagent, then log out and back in. Guest session support varies, especially on Wayland. Unicode text is supported; images and files are not carried by QEMU's VNC clipboard bridge."),
+            Muted("Requires a full VM shutdown/start after enabling. Inside Ubuntu, install spice-vdagent, then log out and back in. Guest session support varies, especially on Wayland. Unicode text is supported; images and files are not supported."),
             Code("sudo apt update\nsudo apt install spice-vdagent"),
+            Heading("Host folders", 18), AsyncButton("Shared folders · No password", () => new HostFoldersWindow(vm).ShowDialog(this), Error),
+            Muted("Choose any Windows folder and its access level. Ubuntu opens it as a network folder; this also works while the VM runs. Shares are created immediately and independently of Save settings."),
             Field("Shared folder (VirtFS / 9p)", path), AsyncButton("Choose folder", async () => { var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Choose a guest shared folder" }); if (folders.FirstOrDefault()?.TryGetLocalPath() is string selected) path.Text = selected; }, Error),
             Check("Read-only share", vm.ShareReadOnly, b => vm.ShareReadOnly = b),
             Muted("Optional and build-dependent. Many Windows QEMU builds do not ship VirtFS. Qemik checks for -virtfs support before launch and reports an error if unavailable. Clear the field to disable sharing."),
             Field("Linux guest mount command", Code("sudo mkdir -p /mnt/share\nsudo mount -t 9p -o trans=virtio,version=9p2000.L share /mnt/share")),
-            Muted("For Windows guests or builds without VirtFS, configure an SMB share over the guest network. SPICE WebDAV and file clipboard transfer are not implemented."));
+            Muted("Shared folders uses a local WebDAV connection in Ubuntu Files without a password or administrator prompt. Previous Windows SMB shares remain available from that window. File clipboard transfer is not implemented."));
     }
     private Control Serial() => Stack(Field("Serial output", Select(vm.Serial, ["none", "file", "tcp"], s => vm.Serial = s)), Field("Local TCP port", Number(vm.SerialPort, 1024, 65535, n => vm.SerialPort = n), "TCP mode listens on 127.0.0.1 only. Use a terminal client to connect."),
         Muted("File mode writes guest serial output to:\n" + Path.Combine(AppPaths.VmDirectory(prefs, vm.Id), "serial.log")));
