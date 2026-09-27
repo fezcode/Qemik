@@ -66,46 +66,51 @@ public sealed partial class GuestWindow : Window
         ToolTip.SetTip(buttons[2], "Immediately stops QEMU and closes this window. Unsaved guest work is lost.");
         for (var i = 0; i < buttons.Length; i++)
         {
-            var button = buttons[i]; WithIcon(button, (string)button.Content!, icons[i]); button.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(button);
+            var button = buttons[i]; WithIcon(button, (string)button.Content!, icons[i]);
         }
         var mediaButton = WithIcon(AsyncButton("Mounted disks", ShowMediaAsync, Error), "Mounted disks", Icons.Disk);
-        mediaButton.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(mediaButton);
         var foldersButton = WithIcon(AsyncButton("Shared folders", () => new HostFoldersWindow(vm).ShowDialog(this), Error), "Shared folders", Icons.Folder);
-        foldersButton.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(foldersButton);
+        Button? settings = null;
         if (viewSettings is not null)
         {
-            var settings = WithIcon(AsyncButton("View settings", () => viewSettings(this), Error), "View settings", Icons.Settings);
-            settings.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(settings);
+            settings = WithIcon(AsyncButton("View settings", () => viewSettings(this), Error), "View settings", Icons.Settings);
         }
         autoResize = Check("Fit resolution", true, _ => ScheduleResize());
-        autoResize.Margin = new Thickness(0, 0, 14, 6);
         ToolTip.SetTip(autoResize, "Request a guest resolution matching this window's pixel size, up to 3840×2160 (4K). Requires a compatible guest graphics driver.");
-        actions.Children.Add(autoResize);
         var resolutionCap = Select("4K", ["1080p", "1440p", "4K"], value => { resolutionLimit = value switch { "1080p" => (1920, 1080), "1440p" => (2560, 1440), _ => (3840, 2160) }; ScheduleResize(); });
-        resolutionCap.Margin = new Thickness(0, 0, 8, 6); resolutionCap.MinWidth = 110;
-        Avalonia.Automation.AutomationProperties.SetName(resolutionCap, "Resolution cap"); ToolTip.SetTip(resolutionCap, "Resolution cap: lower to 1080p for less rendering and display-copy work. Used while Fit resolution is enabled."); actions.Children.Add(resolutionCap);
+        resolutionCap.MinWidth = 110;
+        Avalonia.Automation.AutomationProperties.SetName(resolutionCap, "Resolution cap"); ToolTip.SetTip(resolutionCap, "Resolution cap: lower to 1080p for less rendering and display-copy work. Used while Fit resolution is enabled.");
         var resizeSetup = WithIcon(AsyncButton("Auto-fit setup", ShowResizeSetupAsync, Error), "Auto-fit setup", Icons.Settings);
-        resizeSetup.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(resizeSetup);
         shareClipboard = Check("Share text clipboard", vm.SharedClipboard, enabled =>
         {
             if (display is { } connected) connected.ClipboardEnabled = enabled && ClipboardChannelAvailable;
             if (agentClipboard is { } agent) agent.Enabled = enabled && ClipboardWindowActive;
             lastClipboard = null;
         });
-        shareClipboard.Margin = new Thickness(0, 0, 8, 6);
         ToolTip.SetTip(shareClipboard, "Enable the guest clipboard channel in machine Settings → Sharing first, and install spice-vdagent inside Ubuntu. Text only; sync runs while this window is active.");
-        actions.Children.Add(shareClipboard);
         clipboardSetup = WithIcon(AsyncButton("Set up clipboard", ShowClipboardSetupAsync, Error), "Set up clipboard", Icons.Settings);
-        clipboardSetup.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(clipboardSetup);
         RefreshClipboardControls();
+        Button? keyboard = null;
         if (UsesNativeGpu)
         {
             nativeSurface!.KeyboardError += message => status.Text = "Keyboard disconnected: " + message + " Use Reconnect.";
             autoResize.IsVisible = resolutionCap.IsVisible = resizeSetup.IsVisible = false;
             integration.Text = "GPU rendering · Window size is forwarded to Ubuntu automatically";
-            var keyboard = WithIcon(Button("Capture keyboard", () => nativeSurface!.FocusGuest()), "Capture keyboard", Icons.Keyboard);
-            keyboard.Margin = new Thickness(0, 0, 8, 6); actions.Children.Add(keyboard);
+            keyboard = WithIcon(Button("Capture keyboard", () => nativeSurface!.FocusGuest()), "Capture keyboard", Icons.Keyboard);
         }
+        // Wrap whole groups so related controls stay together at smaller widths.
+        void AddGroup(string title, params Control?[] controls)
+        {
+            var row = Row(controls.OfType<Control>().ToArray()); row.Spacing = 8;
+            var label = Muted(title); label.FontSize = 11; label.LetterSpacing = .6;
+            var group = Stack(label, row); group.Spacing = 6; group.Margin = new Thickness(0, 0, 24, 10);
+            actions.Children.Add(group);
+        }
+        AddGroup("DISPLAY", buttons[4], buttons[6], autoResize, resolutionCap, resizeSetup);
+        AddGroup("KEYBOARD", keyboard, buttons[5]);
+        AddGroup("DEVICES", mediaButton, foldersButton, settings);
+        AddGroup("CLIPBOARD", shareClipboard, clipboardSetup);
+        AddGroup("POWER", pause, buttons[1], buttons[3], buttons[2]);
         clipboardTimer.Tick += async (_, _) =>
         {
             if (UsesNativeGpu) { await SyncAgentClipboardAsync(); return; }
@@ -140,13 +145,34 @@ public sealed partial class GuestWindow : Window
             finally { sendingResize = false; }
         };
         var layout = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto") };
-        layout.Children.Add(new Border { Padding = new Thickness(16, 12, 8, 6), Child = actions });
+        var controls = new Border { Name = "GuestControls", Padding = new Thickness(16, 12, 8, 6), Child = actions };
+        layout.Children.Add(controls);
         Control viewport = nativeSurface is { } gpu ? gpu : surface;
         Grid.SetRow(viewport, 1); layout.Children.Add(viewport);
         var footer = Stack(status, integration, Muted("Click the display to type · Ctrl+Alt+G releases input · Closing this window keeps the guest running")); footer.Spacing = 4;
-        var bottom = new Border { Background = Brush.Parse("#191E17"), Padding = new Thickness(16, 9), Child = footer }; Grid.SetRow(bottom, 2); layout.Children.Add(bottom);
-        Content = layout; Chrome.Frame(this);
-        surface.ReleaseRequested += () => pause.Focus(); surface.InputError += Error;
+        var bottom = new Border { Name = "GuestInfo", Background = Brush.Parse("#191E17"), Padding = new Thickness(16, 9), Child = footer }; Grid.SetRow(bottom, 2); layout.Children.Add(bottom);
+        var toggleControls = new Button { Name = "ToggleGuestControls" };
+        toggleControls.Classes.Add("chrome");
+        var toggleGlyph = Glyph(Icons.Controls, 16);
+        toggleGlyph.Bind(Avalonia.Controls.Shapes.Shape.StrokeProperty, new Avalonia.Data.Binding("Foreground") { Source = toggleControls });
+        toggleControls.Content = toggleGlyph;
+        void UpdateToggleLabel()
+        {
+            var label = controls.IsVisible ? "Hide controls and status" : "Show controls and status";
+            ToolTip.SetTip(toggleControls, label); Avalonia.Automation.AutomationProperties.SetName(toggleControls, label);
+        }
+        toggleControls.Click += (_, _) =>
+        {
+            controls.IsVisible = bottom.IsVisible = !controls.IsVisible;
+            UpdateToggleLabel();
+            if (!controls.IsVisible)
+            {
+                if (nativeSurface is { } gpuSurface) gpuSurface.FocusGuest(); else surface.Focus();
+            }
+        };
+        UpdateToggleLabel();
+        Content = layout; Chrome.Frame(this, toggleControls);
+        surface.ReleaseRequested += () => { if (controls.IsVisible) pause.Focus(); else toggleControls.Focus(); }; surface.InputError += Error;
         manager.Changed += OnStateChanged;
         Opened += async (_, _) => await ConnectAsync();
         Deactivated += (_, _) => surface.ReleaseInput();

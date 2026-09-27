@@ -21,13 +21,15 @@ internal static class Chrome
     private const string MaximizeGlyph = "M0.5 0.5 L9.5 0.5 L9.5 9.5 L0.5 9.5 Z";
     private const string RestoreGlyph = "M2.5 2.5 L2.5 0.5 L9.5 0.5 L9.5 7.5 L7.5 7.5 M0.5 2.5 L7.5 2.5 L7.5 9.5 L0.5 9.5 Z";
     public const string CloseGlyph = "M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5";
-    public static void Frame(Window window)
+    public static void Frame(Window window, Control? captionAction = null)
     {
         var content = (Control)window.Content!;
         window.Content = null;
         Extend(window);
         var frame = new Grid { RowDefinitions = new RowDefinitions("38,*") };
-        frame.Children.Add(TitleBar(window, Ui.Text(window.Title ?? "Qemik", 11), window.CanResize));
+        var title = Ui.Text(window.Title ?? "Qemik", 11);
+        title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
+        frame.Children.Add(TitleBar(window, title, window.CanResize, captionAction));
         Grid.SetRow(content, 1); frame.Children.Add(content); window.Content = frame;
         window.Height += Height; KeepInsideScreen(window, frame);
     }
@@ -58,15 +60,21 @@ internal static class Chrome
     public static void ToggleMaximized(Window window) =>
         window.WindowState = window.WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
 
-    public static Border TitleBar(Window window, Control? lead, bool resizable)
+    public static Border TitleBar(Window window, Control? lead, bool resizable, Control? captionAction = null)
     {
-        var strip = new Grid();
+        var strip = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
         if (lead != null)
         {
             lead.HorizontalAlignment = HorizontalAlignment.Left; lead.VerticalAlignment = VerticalAlignment.Center;
             lead.Margin = new Thickness(18, 0, 0, 0); strip.Children.Add(lead);
         }
         var buttons = new StackPanel { Name = "WindowButtons", Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        if (captionAction is not null)
+        {
+            WindowDecorationProperties.SetElementRole(captionAction, WindowDecorationsElementRole.User);
+            captionAction.DoubleTapped += (_, e) => e.Handled = true;
+            buttons.Children.Add(captionAction);
+        }
         if (resizable)
         {
             buttons.Children.Add(Caption(MinimizeGlyph, "Minimize", WindowDecorationsElementRole.MinimizeButton, () => window.WindowState = WindowState.Minimized));
@@ -83,7 +91,7 @@ internal static class Chrome
             Sync(); buttons.Children.Add(maximize);
         }
         buttons.Children.Add(Caption(CloseGlyph, "Close", WindowDecorationsElementRole.CloseButton, () => window.Close(), "close"));
-        strip.Children.Add(buttons);
+        Grid.SetColumn(buttons, 1); strip.Children.Add(buttons);
         var border = new Border { Name = "WindowChrome", Height = Height, Background = Brushes.Transparent, Child = strip };
         Draggable(border);
         // Win32 resolves the double click on the caption itself; this covers backends that pass it through.

@@ -14,6 +14,7 @@ internal static class Icons
     public const string Library = "M1 1H7V7H1Z M11 1H17V7H11Z M1 11H7V17H1Z M11 11H17V17H11Z";
     public const string Cpu = "M4 4H14V14H4Z M7 7H11V11H7Z M6 0V4 M12 0V4 M6 14V18 M12 14V18 M0 6H4 M0 12H4 M14 6H18 M14 12H18";
     public const string Monitor = "M1 2H17V13H1Z M9 13V17 M5 17H13";
+    public const string Controls = "M1 2H17V16H1Z M1 6H17 M1 13H17 M4 4H6 M8 4H10";
     public const string Settings = "M3 1V17 M9 1V17 M15 1V17 M0 5H6 M6 12H12 M12 7H18";
     public const string Disk = "M2 2H16V16H2Z M5 3V7H13V3 M5 16V11H13V16";
     public const string Network = "M6 1H12V7H6Z M2 12H7V17H2Z M11 12H16V17H11Z M9 7V10 M4 12V10H14V12";
