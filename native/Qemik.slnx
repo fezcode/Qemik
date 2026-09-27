@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Qemik.Core/Qemik.Core.csproj" />
+  <Project Path="Qemik.Cli/Qemik.Cli.csproj" />
+  <Project Path="Qemik.Desktop/Qemik.Desktop.csproj" />
+  <Project Path="Qemik.Tests/Qemik.Tests.csproj" />
+</Solution>

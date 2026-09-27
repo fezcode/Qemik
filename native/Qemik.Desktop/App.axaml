@@ -1,0 +1,43 @@
+<Application xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" x:Class="Qemik.Desktop.App" RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <SolidColorBrush x:Key="ScrollBarTrackFill" Color="Transparent"/>
+    <SolidColorBrush x:Key="ScrollBarTrackStroke" Color="Transparent"/>
+    <SolidColorBrush x:Key="ScrollBarBackground" Color="Transparent"/>
+    <SolidColorBrush x:Key="ScrollBarPanningThumbBackground" Color="#45503E"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFill" Color="#45503E"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFillPointerOver" Color="#728564"/>
+    <SolidColorBrush x:Key="ScrollBarThumbFillPressed" Color="#A3BD8D"/>
+  </Application.Resources>
+  <Application.Styles>
+    <FluentTheme><FluentTheme.Palettes><ColorPaletteResources x:Key="Dark" Accent="#D7F59A" /></FluentTheme.Palettes></FluentTheme>
+    <Style Selector="Window"><Setter Property="Background" Value="#101211"/><Setter Property="Foreground" Value="#ECF2EE"/><Setter Property="FontFamily" Value="avares://Qemik/Assets/Fonts#DM Sans"/><Setter Property="FontSize" Value="13"/></Style>
+    <Style Selector="Button"><Setter Property="CornerRadius" Value="7"/><Setter Property="Padding" Value="14,8"/><Setter Property="MinHeight" Value="36"/><Setter Property="HorizontalContentAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="Background" Value="#252D20"/><Setter Property="BorderBrush" Value="#3D4932"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Cursor" Value="Hand"/></Style>
+    <Style Selector="Button.primary"><Setter Property="Background" Value="#D7F59A"/><Setter Property="Foreground" Value="#25311C"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="BorderThickness" Value="0"/></Style>
+    <Style Selector="Button.primary:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#E5FFB7"/><Setter Property="Foreground" Value="#25311C"/></Style>
+    <Style Selector="Button.nav"><Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Foreground" Value="#A8B7AE"/><Setter Property="Height" Value="42"/><Setter Property="Padding" Value="12,0"/></Style>
+    <Style Selector="Button.nav.active"><Setter Property="Background" Value="#293021"/><Setter Property="Foreground" Value="#D7F59A"/></Style>
+    <Style Selector="Button.danger"><Setter Property="Foreground" Value="#F7B4A9"/><Setter Property="BorderBrush" Value="#75463D"/></Style>
+    <Style Selector="TextBox"><Setter Property="Background" Value="#181C17"/><Setter Property="BorderBrush" Value="#3D4932"/><Setter Property="CornerRadius" Value="6"/><Setter Property="MinHeight" Value="37"/></Style>
+    <Style Selector="ComboBox"><Setter Property="Background" Value="#181C17"/><Setter Property="BorderBrush" Value="#3D4932"/><Setter Property="CornerRadius" Value="6"/><Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="MinHeight" Value="37"/></Style>
+    <Style Selector="NumericUpDown"><Setter Property="Background" Value="#181C17"/><Setter Property="BorderBrush" Value="#3D4932"/><Setter Property="MinHeight" Value="37"/></Style>
+    <Style Selector="TextBlock.muted"><Setter Property="Foreground" Value="#9CABA2"/></Style>
+    <Style Selector="TextBlock.eyebrow"><Setter Property="Foreground" Value="#9DAFA3"/><Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="LetterSpacing" Value="2"/></Style>
+    <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#242923"/></Style>
+    <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#313B26"/></Style>
+    <Style Selector="Button.chrome"><Setter Property="Width" Value="46"/><Setter Property="Height" Value="38"/><Setter Property="MinHeight" Value="0"/><Setter Property="Padding" Value="0"/><Setter Property="CornerRadius" Value="0"/><Setter Property="BorderThickness" Value="0"/><Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="#92988D"/></Style>
+    <Style Selector="Button.chrome:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#252B24"/><Setter Property="BorderBrush" Value="Transparent"/></Style>
+    <Style Selector="Button.chrome.close:pointerover /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="#C0392B"/></Style>
+    <Style Selector="Button.chrome.close:pointerover"><Setter Property="Foreground" Value="White"/></Style>
+    <Style Selector="ScrollViewer"><Setter Property="AllowAutoHide" Value="False"/></Style>
+    <Style Selector="ScrollBar"><Setter Property="Background" Value="Transparent"/><Setter Property="BorderBrush" Value="Transparent"/></Style>
+    <Style Selector="ScrollBar:vertical"><Setter Property="Width" Value="12"/><Setter Property="MinWidth" Value="12"/></Style>
+    <Style Selector="ScrollBar:horizontal"><Setter Property="Height" Value="12"/><Setter Property="MinHeight" Value="12"/></Style>
+    <Style Selector="ScrollBar /template/ Rectangle#TrackRect"><Setter Property="Fill" Value="Transparent"/><Setter Property="Stroke" Value="Transparent"/></Style>
+    <Style Selector="ScrollBar /template/ RepeatButton#PART_LineUpButton, ScrollBar /template/ RepeatButton#PART_LineDownButton"><Setter Property="IsVisible" Value="False"/></Style>
+    <Style Selector="ScrollBar /template/ Thumb"><Setter Property="Background" Value="#45503E"/><Setter Property="CornerRadius" Value="3"/><Setter Property="RenderTransform" Value="none"/></Style>
+    <Style Selector="ScrollBar:vertical /template/ Thumb"><Setter Property="Width" Value="6"/><Setter Property="MinHeight" Value="24"/></Style>
+    <Style Selector="ScrollBar:horizontal /template/ Thumb"><Setter Property="Height" Value="6"/><Setter Property="MinWidth" Value="24"/></Style>
+    <Style Selector="ScrollBar /template/ Thumb:pointerover /template/ Border"><Setter Property="Background" Value="#728564"/></Style>
+    <Style Selector="TabItem"><Setter Property="FontSize" Value="14"/><Setter Property="Padding" Value="14,10"/></Style>
+  </Application.Styles>
+</Application>

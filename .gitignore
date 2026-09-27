@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+dist/
+artifacts/
+.vs/
+*.user
+*.qcow2
+*.iso
+*.vhdx
+*.raw
