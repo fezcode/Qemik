@@ -24,64 +24,53 @@ message file under ignored `artifacts/` and use `git commit -F <file>`. Check th
 exit code and verify the resulting commit before tagging. Supply release notes
 through `--notes-file`, never a multiline command-line argument.
 
-## Current tooling and first-release prerequisites
-
-The existing build entry points are:
+## Build and release tooling
 
 ```powershell
-.\build.ps1 -Test
-.\build.ps1 -Test -Publish -Runtime win-x64
+.\version.ps1                          # report every version location + consistency
+.\version.ps1 -Bump patch              # or -Set X.Y.Z; add -DryRun to preview
+.\build.ps1 -Test                      # build + tests + offscreen UI screenshots
+.\build.ps1 -Test -Publish             # also publish the self-contained folder
+.\build-installer.ps1                  # build/test/publish, then Forge Setup
+.\build-installer.ps1 -SkipBuild       # package the already tested payload
 ```
 
-`-Publish` currently publishes the self-contained desktop folder to
-`dist/win-x64`, including `Qemik.exe`, its dependencies, and assets. It does not
-publish the CLI or create an installer. `artifacts/` holds diagnostics and
-screenshots. Both directories are Git-ignored.
-
-At the introduction of this document, the repository has no `version.ps1`,
-`forge.toml`, `build-installer.ps1`, application license file, configured Git
-remote, or release tags. Reinspect these facts before a release; this is a
-bootstrap checklist, not a permanent assertion that these files are absent.
-Do not report these tools as available until they exist and have been validated.
-
-Before the first RELEASE, implement and validate the following tooling as part
-of preparing the release:
-
-- `version.ps1`: report/check versions, `-Bump patch`, `-Set X.Y.Z`, and `-DryRun`.
-  Fail on missing required version locations or inconsistent values.
-- `forge.toml` and `build-installer.ps1`: package the tested Windows payload as
-  `dist/installer/Qemik-Setup-X.Y.Z.exe` using sibling Forge. Support
-  `-SkipBuild` only for a verified payload of the requested version.
-- Automated packaging checks for version, required files, embedded Forge
-  identity/theme, and preservation of user data during install/upgrade/uninstall.
-- Resolve the actual publishing repository with the user if no destination has
-  already been authorized. Do not infer `fezcode/Qemik`, copy another app's
-  remote, create a repository, or change visibility merely from this template.
-- Use the project's chosen application license and dependency notices. If the
-  application license remains unspecified, resolve it before public packaging;
-  do not copy Airlift's MIT agreement and assume it applies here.
-
-Continue local preparation while any genuinely missing publishing information
-is being clarified. A missing remote does not prevent local builds or packaging.
+- `build.ps1` and `build-installer.ps1` refuse to run on a version mismatch.
+- `-Publish` replaces only `dist/win-x64` with the self-contained desktop folder
+  (`Qemik.exe`, dependencies, `Assets`, `LICENSE.txt`, no PDBs). It does not
+  publish the CLI. A running `dist` copy of Qemik locks that folder and stops the
+  publish; see the running-VM safeguards below.
+- `build-installer.ps1` checks the payload version and required files, builds
+  with sibling `../Forge/build/forge.exe` in a fresh staging folder, rejects a
+  non-GUI Setup, runs `scripts/verify-installer.ps1`, moves the result to
+  `dist/installer/Qemik-Setup-X.Y.Z.exe`, and prints its SHA-256.
+- `scripts/verify-installer.ps1` inspects the embedded Forge bundle: checksum,
+  `com.fezcode.qemik` identity and version, `huh` theme, six nonempty wizard
+  steps, MIT agreement, shortcuts, HKCU registration, finish launch, required
+  payload files, no bundled QEMU/guest media, and an empty `settings_dirs` so
+  uninstall never offers to delete the VM library.
+- `artifacts/` holds diagnostics and screenshots; it and `dist/` are Git-ignored.
+- Qemik is MIT-licensed (`LICENSE.txt`). There is no install/upgrade/uninstall
+  fixture test yet; exercise those paths manually with the real Setup.
+- No Git remote or release tag exists yet. Resolve the actual publishing
+  repository with the user if no destination has already been authorized. Do not
+  infer `fezcode/Qemik`, copy another app's remote, create a repository, or change
+  visibility merely from this template. A missing remote does not prevent local
+  builds or packaging.
 
 ## Version source of truth
 
 `native/Directory.Build.props` `<Version>` is the authoritative application
-version. Read its current value rather than copying a version from another app
-or a historical release note. Dependency versions, QEMU versions, distribution
-versions, and test fixtures are independent; never bump them through a global
-search-and-replace.
+version. It stamps every assembly, and `Qemik.Core.AppVersion` reads that stamp
+at runtime for `--version`, the sidebar footer, the About card, and the
+`Qemik/x.y.z` HTTP User-Agent. Never hardcode an application version in C#; use
+`AppVersion.Current`, `AppVersion.Display`, or `AppVersion.UserAgent`.
+Dependency versions, QEMU versions, distribution versions, and test fixtures
+are independent; never bump them through a global search-and-replace.
 
-Before the first release bump, introduce a shared assembly-derived app-version
-helper and replace Qemik's hardcoded application version strings. Existing
-locations include the desktop `Program.cs` version output, the main-window
-footer, the About content in `MainWindow.Engine.cs`, and the HTTP User-Agent in
-`Qemik.Core/OsImages.cs`; search for other occurrences too. Runtime version text
-must follow the assembly stamp. Do not claim that helper already exists.
-
-Once the release tooling exists, `version.ps1` must keep the props version,
-Forge `[app] version`, and any current-release filenames/links in documentation
-consistent. Installer copy and registry values should interpolate
+`version.ps1` keeps the props version, the Forge `[app] version`, and the
+`Qemik-Setup-X.Y.Z.exe` filename in `README.md` consistent. Edit versions through
+it and read its report. Installer copy and registry values interpolate
 `${app.version}`. Preserve historical notes and use `docs/releases/X.Y.Z.md`
 for each release's notes.
 
@@ -105,7 +94,7 @@ to steps that depend on it; never publish a known-broken build.
    configured remote, local/remote tags, and GitHub releases/drafts. Confirm the
    intended Qemik destination and branch from actual repository configuration
    and the user's instructions. Use the authenticated `gh` account without
-   printing tokens. Complete any first-release prerequisites above. If an
+   printing tokens. If an
    interrupted attempt already bumped the intended version, resume that attempt
    instead of bumping again. Run `./version.ps1 -Bump patch` or `-Set X.Y.Z`,
    then `./version.ps1` to verify consistency.
@@ -128,7 +117,7 @@ to steps that depend on it; never publish a known-broken build.
    just-tested payload. Verify `dist/installer/Qemik-Setup-X.Y.Z.exe` is nonempty,
    contains the matching version and required files, and was produced by this
    attempt. Record size and SHA-256, and inspect the embedded Forge manifest
-   and Mica theme. Surface the exact Setup path and launch the new installer for
+   and `huh` theme. Surface the exact Setup path and launch the new installer for
    the user to install/test when doing so will not disrupt active guests. Keep
    "Open Qemik" selected on Finish; do not relaunch an old installed executable
    and describe it as the new version. Respect a user-requested testing gate.
@@ -169,7 +158,7 @@ an interrupted upload as a draft and report its concrete failure.
   `.deps.json`, `.runtimeconfig.json`, and `Assets`. A standalone `Qemik.exe`
   is not a complete distribution. If the CLI is included later, publish and
   validate it separately and keep its payload paths consistent with Forge.
-- Use Forge's Mica wizard with Qemik's own icon
+- Use Forge's `huh` wizard theme with Qemik's own icon
   (`native/Qemik.Desktop/Assets/qemik.ico`) and a stable Qemik-specific identity
   such as `com.fezcode.qemik` when first establishing the manifest. Preserve the
   chosen ID thereafter; never reuse another app's upgrade/uninstall identity.
@@ -207,7 +196,8 @@ an interrupted upload as a draft and report its concrete failure.
   against a dedicated temporary folder.
 - For relevant integration changes, verify keyboard press/release and focus,
   bidirectional text clipboard, resizing, native GPU rendering, and display
-  close/reopen without stopping the guest. A connected framebuffer or detected
+  close cancellation without stopping the guest, and confirmed close waiting for
+  QEMU to exit. A connected framebuffer or detected
   GPU alone does not prove guest acceleration. Verify the guest renderer before
   making that claim; never equate VirGL with GPU passthrough or CUDA.
 - Distinguish protocol tests, disposable QEMU checks, actual guest checks, and

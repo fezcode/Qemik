@@ -18,7 +18,7 @@ public sealed class QemuInstallation : IDisposable
     public QemuInstallation(HttpMessageHandler? handler = null)
     {
         http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(30) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("Qemik/0.1.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(AppVersion.UserAgent);
     }
     public static IEnumerable<string> CandidateDirectories(string configured)
     {

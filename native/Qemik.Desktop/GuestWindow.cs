@@ -39,9 +39,12 @@ public sealed partial class GuestWindow : Window
     private int agentGeneration;
     private bool ClipboardWindowActive => IsActive || nativeSurface?.IsForeground == true;
     private bool connecting;
+    private VmSession? shownSession;
+    private bool confirmingClose;
     public GuestWindow(VmConfig machine, VmManager vmManager, Func<Task>? enableClipboardForNextStart = null, Func<Window, Task>? viewSettings = null)
     {
         vm = machine; manager = vmManager; this.enableClipboardForNextStart = enableClipboardForNextStart;
+        shownSession = manager.Session(vm.Id);
         if (OperatingSystem.IsWindows() && (manager.Session(vm.Id)?.DisplayBackend ?? vm.Display) == "sdl") nativeSurface = new NativeGpuSurface();
         Title = vm.Name + " — Qemik"; Width = 1152; Height = 840; MinWidth = 820; MinHeight = 520;
         WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -149,7 +152,7 @@ public sealed partial class GuestWindow : Window
         layout.Children.Add(controls);
         Control viewport = nativeSurface is { } gpu ? gpu : surface;
         Grid.SetRow(viewport, 1); layout.Children.Add(viewport);
-        var footer = Stack(status, integration, Muted("Click the display to type · Ctrl+Alt+G releases input · Closing this window keeps the guest running")); footer.Spacing = 4;
+        var footer = Stack(status, integration, Muted("Click the display to type · Ctrl+Alt+G releases input · Close asks before forcing the guest to shut down")); footer.Spacing = 4;
         var bottom = new Border { Name = "GuestInfo", Background = Brush.Parse("#191E17"), Padding = new Thickness(16, 9), Child = footer }; Grid.SetRow(bottom, 2); layout.Children.Add(bottom);
         var toggleControls = new Button { Name = "ToggleGuestControls" };
         toggleControls.Classes.Add("chrome");
@@ -176,8 +179,37 @@ public sealed partial class GuestWindow : Window
         manager.Changed += OnStateChanged;
         Opened += async (_, _) => await ConnectAsync();
         Deactivated += (_, _) => surface.ReleaseInput();
-        Closing += (_, _) => nativeSurface?.Detach();
+        Closing += OnClosing;
         Closed += (_, _) => { manager.Changed -= OnStateChanged; resizeTimer.Stop(); clipboardTimer.Stop(); closing.Cancel(); display?.Dispose(); agentClipboard?.Dispose(); surface.Dispose(); };
+    }
+    private void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (confirmingClose) { e.Cancel = true; return; }
+        if (shownSession is { } session && ReferenceEquals(session, manager.Session(vm.Id)) && manager.IsRunning(vm.Id))
+        {
+            e.Cancel = true;
+            confirmingClose = true;
+            _ = ConfirmCloseAsync(session);
+            return;
+        }
+        // Detaching a live SDL window restores QEMU's standalone display. Only detach
+        // after exit, or when this window belongs to a replaced, stopped session.
+        nativeSurface?.Detach();
+    }
+    private async Task ConfirmCloseAsync(VmSession session)
+    {
+        var closeWindow = false;
+        try
+        {
+            if (!await Confirm("Do you want to force close?", "This immediately shuts down the virtual machine. Unsaved guest work will be lost.", "Force close")) return;
+            // An approval for the previous guest must never stop a newly started one.
+            if (!ReferenceEquals(session, manager.Session(vm.Id))) return;
+            await manager.ForceStopAsync(vm.Id);
+            closeWindow = true;
+        }
+        catch (Exception ex) { Error(ex); }
+        finally { confirmingClose = false; }
+        if (closeWindow) Close();
     }
     private void ScheduleResize() { if (UsesNativeGpu) return; resizeTimer.Stop(); autoFit.Reset(); if (autoResize.IsChecked == true) resizeTimer.Start(); else integration.Text = "Auto-fit off. The current guest resolution is scaled to the window."; }
     private void Error(Exception ex) => status.Text = ex.Message;
@@ -192,6 +224,7 @@ public sealed partial class GuestWindow : Window
     private async Task ConnectAsync()
     {
         if (connecting || closing.IsCancellationRequested) return;
+        shownSession = manager.Session(vm.Id);
         if (nativeSurface is not null)
         {
             connecting = true;

@@ -104,6 +104,9 @@ is self-contained; users of that build do not need a separate .NET installation.
 Keep the **entire published folder** together. QEMU is installed or selected
 separately through the app.
 
+To build the Windows installer `dist/installer/Qemik-Setup-0.1.1.exe`, run
+`.\build-installer.ps1`. It needs the sibling Forge build at `..\Forge\build\forge.exe`.
+
 1. **Set up QEMU.** Open **QEMU engine**, check the available build, download and
    verify it, then launch the publisher's setup wizard. Or locate an existing engine.
 2. **Choose a system.** Open **Download an OS**, or create a machine and attach a local ISO.
@@ -123,7 +126,8 @@ permanent deletion requires reviewing and selecting the files to remove. Detachi
 a disk or ISO preserves its file. Shared media and backing images receive
 additional deletion checks.
 
-Closing a guest window keeps its VM running. **Force shutdown** immediately stops
+Closing a running guest window asks for confirmation before forcing it to shut
+down. Cancel keeps the guest running in its window. **Force shutdown** immediately stops
 QEMU and can lose unsaved guest work. Shut down guests normally before replacing
 the app or changing their hardware.
 

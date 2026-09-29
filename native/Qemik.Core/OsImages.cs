@@ -22,7 +22,7 @@ public sealed partial class OsImages : IDisposable
     public OsImages(HttpMessageHandler? handler = null)
     {
         http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("Qemik/0.1.0");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(AppVersion.UserAgent);
     }
     public static string LatestLts(string html)
     {

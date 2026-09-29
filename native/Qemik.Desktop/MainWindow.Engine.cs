@@ -140,7 +140,7 @@ public sealed partial class MainWindow
                 QemuCommand.Validate(vm);
                 if (await new SettingsWindow(vm, prefs, manager).ShowDialog<bool>(this)) { store.Save(vm); ShowVm(vm.Id); Notify("Configuration imported. Check disk paths before starting."); }
             }, Error))),
-            Card(Stack(Row(new Brand(), Stack(Heading("Qemik", 23), Muted("QEMU + kemik. Virtual machines, with backbone."))), Muted("Built with C# / .NET 10, Avalonia 12 and SQLite — the native Airlift stack.\nVersion 0.1.0 · Fezcode"), Row(Button("QEMU documentation ↗", () => OpenUrl("https://www.qemu.org/docs/master/")), Button("UTM inspiration ↗", () => OpenUrl("https://docs.getutm.app/"))),
+            Card(Stack(Row(new Brand(), Stack(Heading("Qemik", 23), Muted("QEMU + kemik. Virtual machines, with backbone."))), Muted("Built with C# / .NET 10, Avalonia 12 and SQLite — the native Airlift stack.\nVersion " + AppVersion.Current + " · Fezcode"), Row(Button("QEMU documentation ↗", () => OpenUrl("https://www.qemu.org/docs/master/")), Button("UTM inspiration ↗", () => OpenUrl("https://docs.getutm.app/"))),
                 Muted("Platform notes: guest display uses QEMU's separate SDL/GTK window or a local VNC viewer. SPICE clipboard/WebDAV integration, guest agents, TPM provisioning and suspend-to-disk are not implemented. VirtFS and USB passthrough depend on your QEMU build. Windows 11 guests need suitable UEFI/TPM configuration; the Windows template does not provision a TPM."))));
         SetPage("preferences", Scroll(panel));
     }

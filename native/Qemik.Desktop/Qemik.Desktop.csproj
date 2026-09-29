@@ -8,6 +8,7 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.2" />
   </ItemGroup>
   <ItemGroup><None Update="Assets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
+  <ItemGroup><None Include="../../LICENSE.txt" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" /></ItemGroup>
   <ItemGroup><AvaloniaResource Include="Assets/Fonts/**" /></ItemGroup>
   <ItemGroup><AvaloniaResource Include="Assets/qemik-artwork.png" /></ItemGroup>
 </Project>

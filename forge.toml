@@ -1,0 +1,121 @@
+# Qemik installer -- built with Forge (https://github.com/fezcode/Forge)
+#
+#   .\build-installer.ps1          publish + build dist/installer/Qemik-Setup-<version>.exe
+#
+# Do not edit [app] version by hand: version.ps1 keeps it in step with
+# native/Directory.Build.props. Everything else reads ${app.version}.
+
+[app]
+name    = "Qemik"
+version = "0.1.1"
+id      = "com.fezcode.qemik"
+# Patched into Qemik-Setup.exe and used as the Add/Remove Programs icon.
+icon    = "native/Qemik.Desktop/Assets/qemik.ico"
+
+[meta]
+publisher   = "Fezcode"
+homepage    = "https://github.com/fezcode/Qemik"
+support_url = "https://github.com/fezcode/Qemik/issues"
+comments    = "QEMU + kemik. Virtual machines, with backbone."
+
+[ui]
+# huh = real Windows 11 Mica backdrop with a step rail, following light/dark.
+theme        = "huh"
+window_title = "Qemik ${app.version} Setup"
+
+[install]
+default_dir = "${LOCALAPPDATA}/Programs/Qemik"
+
+[uninstall]
+keep = []
+# Deliberately empty. %LOCALAPPDATA%/Fezcode/Qemik holds the VM library --
+# library.db, firmware, guest disks and downloaded media -- so the uninstaller
+# must never offer to delete it. Removing guest data stays an explicit, reviewed
+# action inside Qemik.
+settings_dirs = []
+
+# --- wizard -----------------------------------------------------------------
+
+[[steps]]
+type  = "welcome"
+title = "Qemik ${app.version}"
+body  = "This wizard will install Qemik ${app.version} on your computer.\n\nQemik is a desktop manager for QEMU virtual machines on Windows. QEMU itself is installed separately from inside the app.\n\nClick Next to continue."
+
+[[steps]]
+type           = "license"
+title          = "License Agreement"
+body           = "Qemik is released under the MIT License. Please review the terms below before continuing."
+file           = "LICENSE.txt"
+
+[[steps]]
+type  = "folder"
+title = "Select Folder"
+body  = "Choose where to install Qemik ${app.version}."
+
+[[steps]]
+type  = "shortcuts"
+title = "Select Optional Tasks"
+body  = "Check the items you would like the installer to perform."
+
+[[steps]]
+type  = "install"
+title = "Installing..."
+body  = "Copying Qemik to your computer."
+
+[[steps]]
+type  = "finish"
+title = "Installation Complete"
+body  = "Qemik has been installed successfully.\n\nYour machines live in %LOCALAPPDATA%\\Fezcode\\Qemik and are kept across upgrades and uninstalls.\n\nClick Finish to close the installer."
+
+[[steps.launches]]
+kind    = "app"
+target  = "${INSTALLDIR}/Qemik.exe"
+label   = "Open Qemik"
+checked = true
+
+# --- payload ----------------------------------------------------------------
+
+# The self-contained folder publish from build.ps1 -Publish. Deliberately NOT
+# single-file: runtime DLLs, .deps.json, .runtimeconfig.json, Assets and
+# LICENSE.txt (copied by Qemik.Desktop.csproj) stay beside Qemik.exe. Forge drops
+# [[files]] entries when [[dirs]] is present, so extra files belong in the publish.
+# QEMU, ISOs and guest disks are never bundled.
+[[dirs]]
+src = "dist/win-x64"
+dst = "${INSTALLDIR}"
+
+# --- shortcuts --------------------------------------------------------------
+
+[[shortcuts]]
+target   = "${INSTALLDIR}/Qemik.exe"
+location = "${DESKTOP}/Qemik.lnk"
+name     = "Qemik"
+icon     = "${INSTALLDIR}/Qemik.exe"
+label    = "Create Desktop Shortcut"
+optional = true
+default  = true
+
+[[shortcuts]]
+target   = "${INSTALLDIR}/Qemik.exe"
+location = "${STARTMENU}/Qemik.lnk"
+name     = "Qemik"
+icon     = "${INSTALLDIR}/Qemik.exe"
+label    = "Create Start Menu Entry"
+optional = true
+default  = true
+
+# --- registry ---------------------------------------------------------------
+
+# Forge also writes the Windows Apps & Features uninstall record automatically.
+# Keep app.id stable: that record is how Forge detects existing installations.
+[[registry]]
+hive  = "HKCU"
+key   = 'Software\fezcode\Qemik'
+value = "InstallDir"
+data  = "${INSTALLDIR}"
+
+[[registry]]
+hive  = "HKCU"
+key   = 'Software\fezcode\Qemik'
+value = "Version"
+data  = "${app.version}"

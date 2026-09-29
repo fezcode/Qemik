@@ -189,6 +189,78 @@ public sealed class DesktopTests
         finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); window?.Close(); }
     }
     [AvaloniaFact]
+    public async Task GuestCloseConfirmsBeforeStoppingAndWaitsForProcessExit()
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for guest close validation.");
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var prefs = store.LoadPreferences(); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!;
+        var vm = new VmConfig { Name = "Guest close fixture", MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S" };
+        GuestWindow? window = null;
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            var process = manager.Session(vm.Id)!.Process;
+            window = new GuestWindow(vm, manager); window.Show(); Layout(window);
+            foreach (var dismissWithCancel in new[] { true, false })
+            {
+                window.Close(); await Pump();
+                var dialog = Assert.Single(window.OwnedWindows); Layout(dialog);
+                Assert.Equal("Do you want to force close?", dialog.Title);
+                Assert.True(window.IsVisible); Assert.False(process.HasExited);
+                window.Close(); await Pump(); Assert.Same(dialog, Assert.Single(window.OwnedWindows));
+                if (dismissWithCancel)
+                {
+                    Screenshot(dialog, "guest-force-close-confirmation");
+                    dialog.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Cancel").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                else dialog.Close();
+                await Pump(); Assert.True(window.IsVisible); Assert.False(process.HasExited); Assert.Empty(window.OwnedWindows);
+            }
+            bool? exitedWhenWindowClosed = null;
+            window.Closed += (_, _) => exitedWhenWindowClosed = process.HasExited;
+            window.Close(); await Pump();
+            var confirmation = Assert.Single(window.OwnedWindows); Layout(confirmation);
+            confirmation.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Force close").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (window.IsVisible && DateTime.UtcNow < deadline) await Pump();
+            Assert.False(window.IsVisible); Assert.True(exitedWhenWindowClosed); Assert.False(manager.IsRunning(vm.Id));
+        }
+        finally
+        {
+            if (window is not null) foreach (var dialog in window.OwnedWindows.ToArray()) dialog.Close();
+            await Pump();
+            if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id);
+            window?.Close();
+        }
+    }
+    [AvaloniaFact]
+    public async Task OldGuestCloseApprovalCannotStopReplacementSession()
+    {
+        if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for guest close validation.");
+        using var store = new LibraryStore(CoreTests.TestDirectory()); using var manager = new VmManager();
+        var prefs = store.LoadPreferences(); prefs.QemuDirectory = Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR")!;
+        var vm = new VmConfig { Name = "Replacement guest fixture", MemoryMiB = 256, Cores = 1, Network = "none", ExtraArguments = "-S" };
+        GuestWindow? window = null;
+        try
+        {
+            await manager.StartAsync(vm, prefs);
+            window = new GuestWindow(vm, manager); window.Show(); Layout(window);
+            window.Close(); await Pump(); var dialog = Assert.Single(window.OwnedWindows); Layout(dialog);
+            await manager.ForceStopAsync(vm.Id); await manager.StartAsync(vm, prefs);
+            dialog.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Force close").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Pump(); Assert.True(manager.IsRunning(vm.Id)); Assert.True(window.IsVisible);
+            // Replacing an old display window must not prompt for or stop the new session.
+            window.Close(); await Pump(); Assert.False(window.IsVisible); Assert.True(manager.IsRunning(vm.Id));
+        }
+        finally
+        {
+            if (window is not null) foreach (var dialog in window.OwnedWindows.ToArray()) dialog.Close();
+            await Pump();
+            if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id);
+            window?.Close();
+        }
+    }
+    [AvaloniaFact]
     public async Task MountedMediaDialogShowsLiveDrivesAndConfirmsEjection()
     {
         if (Environment.GetEnvironmentVariable("QEMIK_QEMU_DIR") is null) Assert.Skip("Opt in with QEMIK_QEMU_DIR for live media dialog validation.");
@@ -206,9 +278,9 @@ public sealed class DesktopTests
             await Pump(); var confirmation = Assert.Single(dialog.OwnedWindows); Layout(confirmation);
             confirmation.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == "Cancel").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await Pump(); Assert.Equal(iso, Assert.Single(await manager.MountedDrivesAsync(vm.Id)).Path);
-            dialog.Close(); window.Close();
+            dialog.Close();
         }
-        finally { window?.Close(); if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); }
+        finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); window?.Close(); }
     }
     [AvaloniaFact]
     public async Task DedicatedUbuntuWindowBootsWithRealFramebuffer()
@@ -235,9 +307,8 @@ public sealed class DesktopTests
                 }
             }
             Assert.DoesNotContain(window.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.StartsWith("Display disconnected:") == true);
-            window.Close(); Assert.True(manager.IsRunning(vm.Id));
         }
-        finally { window?.Close(); if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); }
+        finally { if (manager.IsRunning(vm.Id)) await manager.ForceStopAsync(vm.Id); window?.Close(); }
     }
     [AvaloniaFact]
     public void GuestWindowRendersScaledDisplayAndPowerControls()

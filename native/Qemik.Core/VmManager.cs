@@ -26,6 +26,8 @@ public sealed partial class VmManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, VmSession> sessions = new();
     private readonly ConcurrentDictionary<string, SemaphoreSlim> gates = new();
+    // Never disposed: Windows closes it when Qemik's process ends, which stops every guest.
+    private static readonly ChildProcessJob Guests = new();
     public event Action? Changed;
     public VmSession? Session(string id) => sessions.GetValueOrDefault(id);
     public bool IsRunning(string id) => Session(id)?.Active == true;
@@ -85,21 +87,23 @@ public sealed partial class VmManager : IDisposable
             var logGate = new object();
             var process = new Process { StartInfo = command.StartInfo(), EnableRaisingEvents = true };
             process.StartInfo.WorkingDirectory = dir;
-            void Log(object sender, DataReceivedEventArgs e)
+            void Append(string line)
             {
-                if (e.Data is null) return;
                 lock (logGate)
                 {
                     try
                     {
                         if (new FileInfo(logPath).Length > 8 * 1024 * 1024) File.Move(logPath, logPath + ".previous", true);
-                        File.AppendAllText(logPath, e.Data + Environment.NewLine);
+                        File.AppendAllText(logPath, line + Environment.NewLine);
                     }
                     catch (IOException) { }
                 }
             }
+            void Log(object sender, DataReceivedEventArgs e) { if (e.Data is not null) Append(e.Data); }
             process.OutputDataReceived += Log; process.ErrorDataReceived += Log;
             process.Start();
+            try { Guests.Add(process); }
+            catch (System.ComponentModel.Win32Exception ex) { Append($"Qemik: {ex.Message} This guest may keep running if Qemik ends unexpectedly."); }
             var session = new VmSession { Process = process, GuestPort = guestPort, ClipboardPort = clipboardPort, ClipboardChannel = vm.SharedClipboard, StartedConfiguration = vm.Clone(), LaunchCommand = command.Preview };
             if (sessions.TryRemove(vm.Id, out var previous)) previous.Dispose();
             sessions[vm.Id] = session;

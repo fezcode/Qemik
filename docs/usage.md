@@ -55,8 +55,9 @@ Windows `egl-headless` backend failed guest scanout, so the preset uses SDL/Open
 
 The button immediately left of Minimize toggles the toolbar and bottom status
 information together. The title bar stays visible, and the guest receives the
-extra display area. Closing the window detaches the display without stopping
-the VM; **Open** reconnects it.
+extra display area. Closing a running guest window asks **Do you want to force close?**
+Choose **Force close** to immediately shut down the VM and close its display, or
+**Cancel** to keep it running. Unsaved guest work is lost on force close.
 
 ## Resolution and performance
 
