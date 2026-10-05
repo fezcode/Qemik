@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Qemik.Core;
 
 namespace Qemik.Desktop;
 public static class Ui
@@ -35,6 +36,33 @@ public static class Ui
     {
         var items = options.Append(value).Distinct().ToArray(); var c = new ComboBox { ItemsSource = items, SelectedItem = value };
         c.SelectionChanged += (_, _) => { if (c.SelectedItem is string s) changed(s); }; return c;
+    }
+    /// <summary>
+    /// A dropdown of every known value, with the default marked and listed first. With
+    /// <paramref name="allowCustom"/>, a final "Custom…" item reveals a text box for any other
+    /// value; a saved value missing from the list opens there instead of being lost.
+    /// </summary>
+    public static Control Choice(string value, IEnumerable<ChoiceOption> options, string? defaultValue, Action<string> changed, bool allowCustom = true, bool showValue = true)
+    {
+        var list = options.DistinctBy(o => o.Value).OrderBy(o => o.Value == defaultValue ? 0 : 1).ToList();
+        if (!allowCustom && list.All(o => o.Value != value)) list.Add(new ChoiceOption(value, ""));
+        string Label(ChoiceOption o) => (showValue ? o.Description.Length > 0 ? $"{o.Value} · {o.Description}" : o.Value : o.Description) + (o.Value == defaultValue ? " (default)" : "");
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MaxDropDownHeight = 420 };
+        foreach (var o in list) combo.Items.Add(new ComboBoxItem { Content = Label(o), Tag = o.Value });
+        var custom = new ComboBoxItem { Content = "Custom…" };
+        if (allowCustom) combo.Items.Add(custom);
+        var current = value;
+        var text = Input(value, s => { if (combo.SelectedItem == custom) { current = s; changed(s); } });
+        text.PlaceholderText = "Enter a custom value";
+        combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => Equals(i.Tag, value)) ?? custom;
+        text.IsVisible = allowCustom && combo.SelectedItem == custom;
+        combo.SelectionChanged += (_, _) =>
+        {
+            if (combo.SelectedItem == custom) { text.Text = current; text.IsVisible = true; return; }
+            text.IsVisible = false;
+            if (combo.SelectedItem is ComboBoxItem { Tag: string picked }) { current = picked; changed(picked); }
+        };
+        var s = Stack(combo, text); s.Spacing = 6; return s;
     }
     public static NumericUpDown Number(int value, int min, int max, Action<int> changed)
     {

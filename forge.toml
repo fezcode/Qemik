@@ -7,7 +7,7 @@
 
 [app]
 name    = "Qemik"
-version = "0.1.1"
+version = "0.1.2"
 id      = "com.fezcode.qemik"
 # Patched into Qemik-Setup.exe and used as the Add/Remove Programs icon.
 icon    = "native/Qemik.Desktop/Assets/qemik.ico"

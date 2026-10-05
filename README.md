@@ -104,7 +104,7 @@ is self-contained; users of that build do not need a separate .NET installation.
 Keep the **entire published folder** together. QEMU is installed or selected
 separately through the app.
 
-To build the Windows installer `dist/installer/Qemik-Setup-0.1.1.exe`, run
+To build the Windows installer `dist/installer/Qemik-Setup-0.1.2.exe`, run
 `.\build-installer.ps1`. It needs the sibling Forge build at `..\Forge\build\forge.exe`.
 
 1. **Set up QEMU.** Open **QEMU engine**, check the available build, download and

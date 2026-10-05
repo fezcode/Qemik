@@ -25,7 +25,8 @@ obtain an ISO from its publisher and attach it in **Drives**.
 
 Use **Mounted disks → Eject** when the installer asks to remove its installation
 medium. Live changes apply to that QEMU session. After shutdown, detach the ISO
-in **Options → Edit settings → Drives** and set **Boot → Boot order** to `c`.
+in **Options → Edit settings → Drives** and set **Boot → Boot order** to
+**Disk only** (`c`).
 Detaching preserves the ISO. Do not change the system-disk controller during
 installation; Windows needs VirtIO drivers before switching relevant devices.
 
@@ -33,6 +34,13 @@ Hardware edits require a full shutdown/start. **View settings** on a running
 machine shows its startup configuration and current mounted media; saved values
 for the next start are not presented as active hardware. Reopen it to refresh
 media. The Advanced page includes the actual launch command.
+
+Settings are dropdowns, and each one marks the value a new machine of that guest
+type would get as **(default)**. Machine types, CPU models, CPU feature flags and
+network devices come from your installed QEMU; until it is found, a built-in list
+is shown. USB passthrough lists the devices plugged in now, and saved devices that
+are unplugged stay checked as *not connected*. Pick **Custom…** in a dropdown to
+type any other value; a saved value missing from the list opens there unchanged.
 
 ## Display, keyboard, and graphics
 
